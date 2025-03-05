@@ -2,8 +2,6 @@ import os
 from typing import List, Dict, Any, Optional, Tuple, Literal
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-#from langgraph.prebuilt import ToolExecutor
-from langchain_community.llms import Ollama
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
@@ -21,36 +19,14 @@ from agent_tools import (
     compare_and_explain
 )
 
+# Import the new LLM Manager
+from llm_manager import LLMManager
+
 # Load environment variables
 load_dotenv()
 
-# Initialize LLM models with Ollama
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "llama3.2:1b")
-
-generative_model = Ollama(
-    base_url=OLLAMA_BASE_URL,
-    model=os.getenv("GENERATIVE_MODEL", DEFAULT_MODEL),
-    temperature=float(os.getenv("GENERATIVE_TEMPERATURE", "0.7"))
-)
-
-review_model = Ollama(
-    base_url=OLLAMA_BASE_URL,
-    model=os.getenv("REVIEW_MODEL", DEFAULT_MODEL),
-    temperature=float(os.getenv("REVIEW_TEMPERATURE", "0.2"))
-)
-
-summary_model = Ollama(
-    base_url=OLLAMA_BASE_URL,
-    model=os.getenv("SUMMARY_MODEL", DEFAULT_MODEL),
-    temperature=float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))
-)
-
-compare_model = Ollama(
-    base_url=OLLAMA_BASE_URL,
-    model=os.getenv("COMPARE_MODEL", DEFAULT_MODEL),
-    temperature=float(os.getenv("COMPARE_TEMPERATURE", "0.2"))
-)
+# Initialize LLM Manager
+llm_manager = LLMManager()
 
 # Define state for the graph
 class PeerReviewState(BaseModel):
@@ -77,6 +53,55 @@ class PeerReviewState(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
+# Initialize all models
+def initialize_llm_models():
+    """Initialize all LLM models needed for the peer review process."""
+    models = {}
+    
+    # Try to initialize models with LLM Manager
+    models["generative"] = llm_manager.initialize_model_from_env("GENERATIVE_MODEL", "GENERATIVE_TEMPERATURE")
+    models["review"] = llm_manager.initialize_model_from_env("REVIEW_MODEL", "REVIEW_TEMPERATURE")
+    models["summary"] = llm_manager.initialize_model_from_env("SUMMARY_MODEL", "SUMMARY_TEMPERATURE")
+    models["compare"] = llm_manager.initialize_model_from_env("COMPARE_MODEL", "COMPARE_TEMPERATURE")
+    
+    # Fall back to defaults for any model that failed to initialize
+    if not models["generative"]:
+        print("Falling back to default model for generative tasks")
+        models["generative"] = llm_manager.initialize_model(
+            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
+            "ollama",
+            {"temperature": float(os.getenv("GENERATIVE_TEMPERATURE", "0.7"))}
+        )
+    
+    if not models["review"]:
+        print("Falling back to default model for review tasks")
+        models["review"] = llm_manager.initialize_model(
+            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
+            "ollama",
+            {"temperature": float(os.getenv("REVIEW_TEMPERATURE", "0.2"))}
+        )
+        
+    if not models["summary"]:
+        print("Falling back to default model for summary tasks")
+        models["summary"] = llm_manager.initialize_model(
+            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
+            "ollama",
+            {"temperature": float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))}
+        )
+        
+    if not models["compare"]:
+        print("Falling back to default model for comparison tasks")
+        models["compare"] = llm_manager.initialize_model(
+            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
+            "ollama",
+            {"temperature": float(os.getenv("COMPARE_TEMPERATURE", "0.2"))}
+        )
+    
+    return models
+
+# Initialize all LLM models
+llm_models = initialize_llm_models()
+
 # Define the nodes for our graph
 def generate_problem_node(state: PeerReviewState) -> PeerReviewState:
     """Generate code problems with intentional issues."""
@@ -84,27 +109,28 @@ def generate_problem_node(state: PeerReviewState) -> PeerReviewState:
         # Test Ollama connection first
         import requests
         try:
-            response = requests.get(f"{OLLAMA_BASE_URL}/api/tags")
+            response = requests.get(f"{llm_manager.ollama_base_url}/api/tags")
             if response.status_code != 200:
                 return PeerReviewState(
                     **state.dict(),
-                    error=f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Status code: {response.status_code}",
+                    error=f"Cannot connect to Ollama at {llm_manager.ollama_base_url}. Status code: {response.status_code}",
                     current_step="error"
                 )
             
             # Check if model exists
             models = response.json().get("models", [])
-            model_exists = any(m.get("name") == DEFAULT_MODEL for m in models)
+            default_model = llm_manager.default_model
+            model_exists = any(m.get("name") == default_model for m in models)
             if not model_exists:
                 return PeerReviewState(
                     **state.dict(),
-                    error=f"Model '{DEFAULT_MODEL}' not found in Ollama. Please run 'ollama pull {DEFAULT_MODEL}' first.",
+                    error=f"Model '{default_model}' not found in Ollama. Please run 'ollama pull {default_model}' first.",
                     current_step="error"
                 )
         except requests.RequestException as re:
             return PeerReviewState(
                 **state.dict(),
-                error=f"Failed to connect to Ollama at {OLLAMA_BASE_URL}. Error: {str(re)}",
+                error=f"Failed to connect to Ollama at {llm_manager.ollama_base_url}. Error: {str(re)}",
                 current_step="error"
             )
         
@@ -114,7 +140,7 @@ def generate_problem_node(state: PeerReviewState) -> PeerReviewState:
             problem_areas=state.problem_areas,
             difficulty_level=state.difficulty_level,
             code_length=state.code_length,
-            llm=generative_model
+            llm=llm_models["generative"]
         )
         
         return PeerReviewState(
@@ -146,7 +172,7 @@ def analyze_review_node(state: PeerReviewState) -> PeerReviewState:
             code_snippet=state.code_snippet,
             known_problems=state.known_problems,
             student_review=state.student_review,
-            llm=review_model
+            llm=llm_models["review"]
         )
         
         return PeerReviewState(
@@ -166,7 +192,7 @@ def summarize_review_node(state: PeerReviewState) -> PeerReviewState:
     try:
         review_summary = summarize_review_comments(
             review_comments=state.student_review,
-            llm=summary_model
+            llm=llm_models["summary"]
         )
         
         return PeerReviewState(
@@ -190,7 +216,7 @@ def compare_explain_node(state: PeerReviewState) -> PeerReviewState:
             student_review=state.student_review,
             review_analysis=state.review_analysis,
             review_summary=state.review_summary,
-            llm=compare_model
+            llm=llm_models["compare"]
         )
         
         return PeerReviewState(
