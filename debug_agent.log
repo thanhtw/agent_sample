@@ -1,0 +1,181 @@
+2025-03-05 22:04:51,276 - debug_agent - INFO - Starting agent workflow tests
+2025-03-05 22:04:51,276 - debug_agent - INFO - ==================================================
+2025-03-05 22:04:51,276 - debug_agent - INFO - Running LLM Manager test...
+2025-03-05 22:04:51,276 - debug_agent - INFO - Testing LLM Manager...
+2025-03-05 22:04:53,407 - debug_agent - INFO - Initializing LLM Manager
+2025-03-05 22:04:53,409 - debug_agent - INFO - Testing Ollama connection
+2025-03-05 22:04:53,426 - debug_agent - INFO - Connection status: True
+2025-03-05 22:04:53,426 - debug_agent - INFO - Connection message: Connected to Ollama successfully
+2025-03-05 22:04:53,426 - debug_agent - INFO - Getting available models
+2025-03-05 22:04:53,435 - debug_agent - INFO - Found 9 models
+2025-03-05 22:04:53,436 - debug_agent - INFO - Default model: llama3.2:1b
+2025-03-05 22:04:53,461 - debug_agent - INFO - Default model available: True
+2025-03-05 22:04:53,461 - debug_agent - INFO - Initializing default model llama3.2:1b
+2025-03-05 22:04:59,649 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:04:59,649 - debug_agent - INFO - Model initialized successfully
+2025-03-05 22:04:59,649 - debug_agent - INFO - Testing basic text generation
+2025-03-05 22:05:00,925 - debug_agent - INFO - Model response: public class HelloWorld {
+    // Method to print "Hello, World!"
+}...
+2025-03-05 22:05:00,926 - debug_agent - INFO - LLM Manager test PASSED
+2025-03-05 22:05:00,926 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:05:00,926 - debug_agent - INFO - Running Code Generation test...
+2025-03-05 22:05:00,926 - debug_agent - INFO - Testing code generation...
+2025-03-05 22:05:01,060 - java_error_handler - INFO - Loaded 48 Java build errors
+2025-03-05 22:05:01,061 - java_error_handler - INFO - Loaded 89 Java checkstyle errors
+2025-03-05 22:05:01,809 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:05:01,809 - debug_agent - INFO - Generating java code with ['style', 'logical'] problems
+2025-03-05 22:05:01,809 - agent_tools - INFO - Generating Java code problem with 2 specific errors
+2025-03-05 22:06:11,808 - agent_tools - INFO - Generated Java code problem with 3 problems
+2025-03-05 22:06:11,808 - debug_agent - INFO - Code generation completed in 70.00 seconds
+2025-03-05 22:06:11,808 - debug_agent - INFO - Generated 3 problems
+2025-03-05 22:06:11,808 - debug_agent - INFO - Problem 1: {'Description of problem 1 with location': 'BUILD ERROR - Deadlock\nDescription: Happens when two or more threads are blocked forever, waiting for each other to release resources.\nSuggestion: Implement a semaphore or lock mechanism to manage thread access to shared resources.', 'Location': 'line 5'}
+2025-03-05 22:06:11,808 - debug_agent - INFO - Problem 2: {'Description of problem 2 with location': 'BUILD ERROR - Resource leaks\nDescription: Not properly closing resources like files, database connections, or network sockets.\nSuggestion: Implement try-with-resources statements and close resources manually to avoid resource leaks.', 'Location': 'line 13'}
+2025-03-05 22:06:11,808 - debug_agent - INFO - Problem 3: {'Description of problem 3 with location': 'BUILD ERROR - Deadlock\nDescription: Happens when two or more threads are blocked forever, waiting for each other to release resources.\nSuggestion: Implement a thread-safe data structure like ConcurrentHashMap or copy-on-write approach to avoid deadlocks.', 'Location': 'line 21'}
+2025-03-05 22:06:11,808 - debug_agent - INFO - Code saved to debug_generated_code.java
+2025-03-05 22:06:11,808 - debug_agent - INFO - Code Generation test PASSED
+2025-03-05 22:06:11,808 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:06:11,808 - debug_agent - INFO - Running Review Analysis test...
+2025-03-05 22:06:11,808 - debug_agent - INFO - Testing review analysis...
+2025-03-05 22:06:11,808 - debug_agent - ERROR - Error in review analysis test: LLMManager.initialize_model() got an unexpected keyword argument 'default_model'
+2025-03-05 22:06:11,808 - debug_agent - INFO - Review Analysis test FAILED
+2025-03-05 22:06:11,808 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:06:11,808 - debug_agent - INFO - Running Targeted Guidance test...
+2025-03-05 22:06:11,808 - debug_agent - INFO - Testing targeted guidance generation...
+2025-03-05 22:06:11,808 - debug_agent - ERROR - Error in targeted guidance test: LLMManager.initialize_model() got an unexpected keyword argument 'default_model'
+2025-03-05 22:06:11,808 - debug_agent - INFO - Targeted Guidance test FAILED
+2025-03-05 22:06:11,808 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:06:11,808 - debug_agent - INFO - Running End-to-End Workflow test...
+2025-03-05 22:06:11,808 - debug_agent - INFO - Testing end-to-end workflow...
+2025-03-05 22:06:13,565 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:06:13,565 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:06:13,565 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:06:13,565 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:06:13,565 - debug_agent - INFO - Running peer review agent
+2025-03-05 22:06:13,577 - debug_agent - ERROR - Error in end-to-end workflow test: issubclass() arg 1 must be a class
+2025-03-05 22:06:13,579 - debug_agent - INFO - End-to-End Workflow test FAILED
+2025-03-05 22:06:13,579 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:06:13,579 - debug_agent - INFO - Test Results Summary:
+2025-03-05 22:06:13,579 - debug_agent - INFO - LLM Manager: PASS
+2025-03-05 22:06:13,579 - debug_agent - INFO - Code Generation: PASS
+2025-03-05 22:06:13,579 - debug_agent - INFO - Review Analysis: FAIL
+2025-03-05 22:06:13,579 - debug_agent - INFO - Targeted Guidance: FAIL
+2025-03-05 22:06:13,579 - debug_agent - INFO - End-to-End Workflow: FAIL
+2025-03-05 22:06:13,579 - debug_agent - INFO - Some tests FAILED. Check logs for details.
+2025-03-05 22:13:14,772 - debug_agent - INFO - Starting agent workflow tests
+2025-03-05 22:13:14,772 - debug_agent - INFO - ==================================================
+2025-03-05 22:13:14,772 - debug_agent - INFO - Running LLM Manager test...
+2025-03-05 22:13:14,775 - debug_agent - INFO - Testing LLM Manager...
+2025-03-05 22:13:16,792 - debug_agent - INFO - Initializing LLM Manager
+2025-03-05 22:13:16,792 - debug_agent - INFO - Testing Ollama connection
+2025-03-05 22:13:16,807 - debug_agent - INFO - Connection status: True
+2025-03-05 22:13:16,807 - debug_agent - INFO - Connection message: Connected to Ollama successfully
+2025-03-05 22:13:16,807 - debug_agent - INFO - Getting available models
+2025-03-05 22:13:16,821 - debug_agent - INFO - Found 9 models
+2025-03-05 22:13:16,821 - debug_agent - INFO - Default model: llama3.2:1b
+2025-03-05 22:13:16,840 - debug_agent - INFO - Default model available: True
+2025-03-05 22:13:16,840 - debug_agent - INFO - Initializing default model llama3.2:1b
+2025-03-05 22:13:17,518 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:13:17,518 - debug_agent - INFO - Model initialized successfully
+2025-03-05 22:13:17,518 - debug_agent - INFO - Testing basic text generation
+2025-03-05 22:13:19,724 - debug_agent - INFO - Model response: public class HelloWorld {
+    // Method to print "Hello, World!"
+    public static void main(String[...
+2025-03-05 22:13:19,724 - debug_agent - INFO - LLM Manager test PASSED
+2025-03-05 22:13:19,724 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:13:19,724 - debug_agent - INFO - Running Code Generation test...
+2025-03-05 22:13:19,724 - debug_agent - INFO - Testing code generation...
+2025-03-05 22:13:19,841 - java_error_handler - INFO - Loaded 48 Java build errors
+2025-03-05 22:13:19,842 - java_error_handler - INFO - Loaded 89 Java checkstyle errors
+2025-03-05 22:13:21,408 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:13:21,408 - debug_agent - INFO - Generating java code with ['style', 'logical'] problems
+2025-03-05 22:13:21,408 - agent_tools - INFO - Generating Java code problem with 2 specific errors
+2025-03-05 22:14:29,980 - agent_tools - INFO - Generated Java code problem with 10 problems
+2025-03-05 22:14:29,980 - debug_agent - INFO - Code generation completed in 68.57 seconds
+2025-03-05 22:14:29,980 - debug_agent - INFO - Generated 10 problems
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 1: b;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int multiply(int a, int b) {
+        lock.lock();
+        try {
+            return a
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 2: b;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public double divide(int a, int b) {
+        if (b == 0) {
+            throw new ArithmeticException("Cannot divide by zero");
+        }
+        lock.lock();
+        try {
+            return a / b;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+Code Snippet:
+// Your Java code with intentional problems here
+/
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 3: A simple calculator class with methods for addition, subtraction, multiplication, and division.
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 4: b;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // Division should be done using floating
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 5: BUILD ERROR
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 6: Deadlock: Happens when two or more threads are blocked forever, waiting for each other to release resources.
+	+ Description: The `add`, `subtract`, and `multiply` methods have a deadlock because they acquire the lock in both the critical section and outside the lock. When one thread calls `add(a, b)`, it acquires the lock, but before it returns, another thread (either `subtract` or `multiply`) tries to call `divide(a, b)` which is also blocked because of the deadlock.
+	+ Location: In `Calculator.add(int a, int b)`
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 7: BUILD ERROR
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 8: Unintended integer division: Occurs when dividing two integers and expecting a floating
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 9: BUILD ERROR
+2025-03-05 22:14:29,980 - debug_agent - INFO - Problem 10: Unintended integer division
+	+ Description: The `divide` method divides `a` by `b`, but it should be done using floating
+2025-03-05 22:14:29,980 - debug_agent - INFO - Code saved to debug_generated_code.java
+2025-03-05 22:14:29,983 - debug_agent - INFO - Code Generation test PASSED
+2025-03-05 22:14:29,983 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:14:29,983 - debug_agent - INFO - Running Review Analysis test...
+2025-03-05 22:14:29,983 - debug_agent - INFO - Testing review analysis...
+2025-03-05 22:14:29,983 - debug_agent - ERROR - Error in review analysis test: LLMManager.initialize_model() got an unexpected keyword argument 'default_model'
+2025-03-05 22:14:29,985 - debug_agent - INFO - Review Analysis test FAILED
+2025-03-05 22:14:29,985 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:14:29,985 - debug_agent - INFO - Running Targeted Guidance test...
+2025-03-05 22:14:29,985 - debug_agent - INFO - Testing targeted guidance generation...
+2025-03-05 22:14:29,985 - debug_agent - ERROR - Error in targeted guidance test: LLMManager.initialize_model() got an unexpected keyword argument 'default_model'
+2025-03-05 22:14:29,985 - debug_agent - INFO - Targeted Guidance test FAILED
+2025-03-05 22:14:29,985 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:14:29,985 - debug_agent - INFO - Running End-to-End Workflow test...
+2025-03-05 22:14:29,988 - debug_agent - INFO - Testing end-to-end workflow...
+2025-03-05 22:14:31,867 - llm_manager - INFO - Successfully initialized model llama3.2:1b
+2025-03-05 22:14:31,867 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:14:31,867 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:14:31,867 - llm_manager - INFO - Using cached model: llama3.2:1b
+2025-03-05 22:14:31,869 - debug_agent - INFO - Running peer review agent
+2025-03-05 22:14:31,879 - agent - INFO - Running peer review agent for java
+2025-03-05 22:14:31,902 - agent - INFO - Generating code problem for java with difficulty easy
+2025-03-05 22:14:31,903 - agent_tools - INFO - Generating Java code problem with 1 specific errors
+2025-03-05 22:14:45,877 - agent_tools - INFO - Generated Java code problem with 3 problems
+2025-03-05 22:14:45,877 - agent - INFO - Successfully generated code with 3 known problems
+2025-03-05 22:14:45,881 - debug_agent - INFO - Initial workflow completed in 14.01 seconds
+2025-03-05 22:14:45,881 - debug_agent - ERROR - Workflow returned error: No student review provided for analysis.
+2025-03-05 22:14:45,881 - debug_agent - INFO - End-to-End Workflow test FAILED
+2025-03-05 22:14:45,881 - debug_agent - INFO - --------------------------------------------------
+2025-03-05 22:14:45,881 - debug_agent - INFO - Test Results Summary:
+2025-03-05 22:14:45,881 - debug_agent - INFO - LLM Manager: PASS
+2025-03-05 22:14:45,881 - debug_agent - INFO - Code Generation: PASS
+2025-03-05 22:14:45,881 - debug_agent - INFO - Review Analysis: FAIL
+2025-03-05 22:14:45,881 - debug_agent - INFO - Targeted Guidance: FAIL
+2025-03-05 22:14:45,881 - debug_agent - INFO - End-to-End Workflow: FAIL
+2025-03-05 22:14:45,881 - debug_agent - INFO - Some tests FAILED. Check logs for details.

@@ -13,10 +13,10 @@ import os
 import logging
 import traceback
 import datetime
-from typing import List, Dict, Any, Optional, Tuple, Literal
+import json
+from typing import List, Dict, Any, Optional, Tuple, Literal, cast
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from pydantic import BaseModel, Field
 
 # Import custom prompts and tools
 from agent_prompts import (
@@ -35,7 +35,7 @@ from agent_tools import (
     generate_targeted_guidance
 )
 
-# Import the enhanced state model
+# Import the enhanced state model (non-Pydantic version)
 from enhanced_peer_review_state import EnhancedPeerReviewState, ReviewIteration
 
 # Import the LLM Manager
@@ -104,190 +104,211 @@ def initialize_llm_models():
 llm_models = initialize_llm_models()
 
 # Define the nodes for our enhanced graph
-def generate_problem_node(state: EnhancedPeerReviewState) -> EnhancedPeerReviewState:
+def generate_problem_node(state: Dict) -> Dict:
     """Generate code problems with intentional issues."""
+    # Convert dict to state object for processing
+    state_obj = dict_to_state(state)
+    
     try:
         # Test Ollama connection first
         connection_status, message = llm_manager.check_ollama_connection()
         
         if not connection_status:
-            return EnhancedPeerReviewState(
-                programming_language=state.programming_language,
-                problem_areas=state.problem_areas,
-                difficulty_level=state.difficulty_level,
-                code_length=state.code_length,
+            error_state = EnhancedPeerReviewState(
+                programming_language=state_obj.programming_language,
+                problem_areas=state_obj.problem_areas,
+                difficulty_level=state_obj.difficulty_level,
+                code_length=state_obj.code_length,
                 error=f"Cannot connect to Ollama: {message}",
                 current_step="error"
             )
+            return error_state.to_dict()
         
         # Check if default model exists
         default_model = llm_manager.default_model
         if not llm_manager.check_model_availability(default_model):
-            return EnhancedPeerReviewState(
-                programming_language=state.programming_language,
-                problem_areas=state.problem_areas,
-                difficulty_level=state.difficulty_level,
-                code_length=state.code_length,
+            error_state = EnhancedPeerReviewState(
+                programming_language=state_obj.programming_language,
+                problem_areas=state_obj.problem_areas,
+                difficulty_level=state_obj.difficulty_level,
+                code_length=state_obj.code_length,
                 error=f"Model '{default_model}' not found in Ollama. Please run 'ollama pull {default_model}' first.",
                 current_step="error"
             )
+            return error_state.to_dict()
         
         # Continue with code generation if Ollama is available
+        logger.info(f"Generating code problem for {state_obj.programming_language} with difficulty {state_obj.difficulty_level}")
         code_snippet, known_problems, raw_errors = generate_code_problem(
-            programming_language=state.programming_language,
-            problem_areas=state.problem_areas,
-            difficulty_level=state.difficulty_level,
-            code_length=state.code_length,
+            programming_language=state_obj.programming_language,
+            problem_areas=state_obj.problem_areas,
+            difficulty_level=state_obj.difficulty_level,
+            code_length=state_obj.code_length,
             llm=llm_models["generative"]
         )
         
+        logger.info(f"Successfully generated code with {len(known_problems)} known problems")
+        
         # Create a new state with updated values
-        return EnhancedPeerReviewState(
-            programming_language=state.programming_language,
-            problem_areas=state.problem_areas,
-            difficulty_level=state.difficulty_level,
-            code_length=state.code_length,
+        new_state = EnhancedPeerReviewState(
+            programming_language=state_obj.programming_language,
+            problem_areas=state_obj.problem_areas,
+            difficulty_level=state_obj.difficulty_level,
+            code_length=state_obj.code_length,
             code_snippet=code_snippet,
             known_problems=known_problems,
             raw_errors=raw_errors,
             current_step="wait_for_review",
             iteration_count=1,
-            max_iterations=3  # Default to 3 attempts
+            max_iterations=state_obj.max_iterations
         )
+        return new_state.to_dict()
     
     except Exception as e:
         error_traceback = traceback.format_exc()
         logger.error(f"Error generating code problem: {str(e)}\n{error_traceback}")
         
-        return EnhancedPeerReviewState(
-            programming_language=state.programming_language,
-            problem_areas=state.problem_areas,
-            difficulty_level=state.difficulty_level,
-            code_length=state.code_length,
+        error_state = EnhancedPeerReviewState(
+            programming_language=state_obj.programming_language,
+            problem_areas=state_obj.problem_areas,
+            difficulty_level=state_obj.difficulty_level,
+            code_length=state_obj.code_length,
             error=f"Error generating code problem: {str(e)}",
             current_step="error"
         )
+        return error_state.to_dict()
 
-def analyze_review_node(state: EnhancedPeerReviewState) -> EnhancedPeerReviewState:
+def analyze_review_node(state: Dict) -> Dict:
     """Analyze a student's review of code problems with iteration support."""
+    # Convert dict to state object for processing
+    state_obj = dict_to_state(state)
+    
     try:
-        if not state.student_review:
-            return EnhancedPeerReviewState(
-                **state.dict(),
-                error="No student review provided for analysis.",
-                current_step="error"
-            )
+        if not state_obj.student_review:
+            error_state = EnhancedPeerReviewState(**state_obj.to_dict())
+            error_state.error = "No student review provided for analysis."
+            error_state.current_step = "error"
+            return error_state.to_dict()
+        
+        logger.info(f"Analyzing student review (iteration {state_obj.iteration_count})")
         
         # Analyze the student review
         review_analysis = analyze_student_review(
-            code_snippet=state.code_snippet,
-            known_problems=state.known_problems,
-            student_review=state.student_review,
+            code_snippet=state_obj.code_snippet,
+            known_problems=state_obj.known_problems,
+            student_review=state_obj.student_review,
             llm=llm_models["review"]
         )
         
+        logger.info(f"Analysis: found {review_analysis.get('identified_count', 0)} of {review_analysis.get('total_problems', 0)} problems")
+        
         # Create a review iteration record
         current_iteration = ReviewIteration(
-            iteration_number=state.iteration_count,
-            student_review=state.student_review,
+            iteration_number=state_obj.iteration_count,
+            student_review=state_obj.student_review,
             review_analysis=review_analysis,
             timestamp=datetime.datetime.now().isoformat()
         )
         
         # Update review history
-        review_history = state.review_history.copy()
+        review_history = state_obj.review_history.copy()
         review_history.append(current_iteration)
+        
+        # Clone the current state before modifying
+        new_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        new_state.review_analysis = review_analysis
+        new_state.review_history = review_history
         
         # Check if the review is sufficient
         if review_analysis.get("review_sufficient", False):
             # If sufficient, proceed to summary
-            return EnhancedPeerReviewState(
-                **state.dict(),
-                review_analysis=review_analysis,
-                review_history=review_history,
-                review_sufficient=True,
-                current_step="summarize_review"
-            )
+            logger.info("Student review is sufficient, proceeding to summary")
+            new_state.review_sufficient = True
+            new_state.current_step = "summarize_review"
+            return new_state.to_dict()
         else:
             # If not sufficient and we have more iterations available
-            if state.iteration_count < state.max_iterations:
+            if state_obj.iteration_count < state_obj.max_iterations:
+                logger.info(f"Student review is insufficient, generating guidance (iteration {state_obj.iteration_count})")
+                
                 # Generate targeted guidance
                 targeted_guidance = generate_targeted_guidance(
-                    code_snippet=state.code_snippet,
-                    known_problems=state.known_problems,
-                    student_review=state.student_review,
+                    code_snippet=state_obj.code_snippet,
+                    known_problems=state_obj.known_problems,
+                    student_review=state_obj.student_review,
                     review_analysis=review_analysis,
-                    iteration_count=state.iteration_count,
-                    max_iterations=state.max_iterations,
+                    iteration_count=state_obj.iteration_count,
+                    max_iterations=state_obj.max_iterations,
                     llm=llm_models["review"]
                 )
                 
                 # Update state for next iteration
-                return EnhancedPeerReviewState(
-                    **state.dict(),
-                    review_analysis=review_analysis,
-                    review_history=review_history,
-                    targeted_guidance=targeted_guidance,
-                    iteration_count=state.iteration_count + 1,
-                    review_sufficient=False,
-                    current_step="wait_for_review"  # Go back to waiting for next review
-                )
+                new_state.targeted_guidance = targeted_guidance
+                new_state.iteration_count = state_obj.iteration_count + 1
+                new_state.review_sufficient = False
+                new_state.current_step = "wait_for_review"  # Go back to waiting for next review
+                
+                return new_state.to_dict()
             else:
                 # If we've run out of iterations, proceed anyway
                 logger.info("Max iterations reached, proceeding to summary despite insufficient review")
-                return EnhancedPeerReviewState(
-                    **state.dict(),
-                    review_analysis=review_analysis,
-                    review_history=review_history,
-                    review_sufficient=False,
-                    current_step="summarize_review"
-                )
+                new_state.review_sufficient = False
+                new_state.current_step = "summarize_review"
+                return new_state.to_dict()
     
     except Exception as e:
-        logger.error(f"Error analyzing student review: {str(e)}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error analyzing student review: {str(e)}\n{error_traceback}")
         
-        return EnhancedPeerReviewState(
-            **state.dict(),
-            error=f"Error analyzing student review: {str(e)}",
-            current_step="error"
-        )
+        error_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        error_state.error = f"Error analyzing student review: {str(e)}"
+        error_state.current_step = "error"
+        return error_state.to_dict()
 
-def summarize_review_node(state: EnhancedPeerReviewState) -> EnhancedPeerReviewState:
+def summarize_review_node(state: Dict) -> Dict:
     """Summarize review comments from all iterations."""
+    # Convert dict to state object for processing
+    state_obj = dict_to_state(state)
+    
     try:
         # Get the latest/best review
-        latest_review = state.student_review
+        latest_review = state_obj.student_review
         
         # Determine if code is Java
-        is_java = state.programming_language.lower() == "java"
+        is_java = state_obj.programming_language.lower() == "java"
         
+        logger.info("Generating review summary")
         review_summary = summarize_review_comments(
             review_comments=latest_review,
             llm=llm_models["summary"],
             is_java=is_java
         )
         
-        return EnhancedPeerReviewState(
-            **state.dict(),
-            review_summary=review_summary,
-            current_step="compare_explain"
-        )
+        # Clone the current state before modifying
+        new_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        new_state.review_summary = review_summary
+        new_state.current_step = "compare_explain"
+        
+        return new_state.to_dict()
     
     except Exception as e:
-        logger.error(f"Error summarizing review: {str(e)}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error summarizing review: {str(e)}\n{error_traceback}")
         
-        return EnhancedPeerReviewState(
-            **state.dict(),
-            error=f"Error summarizing review: {str(e)}",
-            current_step="error"
-        )
+        error_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        error_state.error = f"Error summarizing review: {str(e)}"
+        error_state.current_step = "error"
+        return error_state.to_dict()
 
-def compare_explain_node(state: EnhancedPeerReviewState) -> EnhancedPeerReviewState:
+def compare_explain_node(state: Dict) -> Dict:
     """Compare student review with known problems and explain differences."""
+    # Convert dict to state object for processing
+    state_obj = dict_to_state(state)
+    
     try:
         # Convert review history to a format usable by the compare function
         review_history_dicts = []
-        for review in state.review_history:
+        for review in state_obj.review_history:
             review_history_dicts.append({
                 "iteration": review.iteration_number,
                 "student_review": review.student_review,
@@ -296,47 +317,60 @@ def compare_explain_node(state: EnhancedPeerReviewState) -> EnhancedPeerReviewSt
             })
         
         # Determine if code is Java
-        is_java = state.programming_language.lower() == "java"
+        is_java = state_obj.programming_language.lower() == "java"
         
+        logger.info("Generating comparison report")
         comparison_report = compare_and_explain(
-            code_snippet=state.code_snippet,
-            known_problems=state.known_problems,
-            student_review=state.student_review,
-            review_analysis=state.review_analysis,
-            review_summary=state.review_summary,
+            code_snippet=state_obj.code_snippet,
+            known_problems=state_obj.known_problems,
+            student_review=state_obj.student_review,
+            review_analysis=state_obj.review_analysis,
+            review_summary=state_obj.review_summary,
             review_history=review_history_dicts if len(review_history_dicts) > 1 else None,
             llm=llm_models["compare"],
             is_java=is_java
         )
         
-        return EnhancedPeerReviewState(
-            **state.dict(),
-            comparison_report=comparison_report,
-            current_step="complete"
-        )
+        # Clone the current state before modifying
+        new_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        new_state.comparison_report = comparison_report
+        new_state.current_step = "complete"
+        
+        return new_state.to_dict()
     
     except Exception as e:
-        logger.error(f"Error comparing and explaining: {str(e)}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error comparing and explaining: {str(e)}\n{error_traceback}")
         
-        return EnhancedPeerReviewState(
-            **state.dict(),
-            error=f"Error comparing and explaining: {str(e)}",
-            current_step="error"
-        )
+        error_state = EnhancedPeerReviewState(**state_obj.to_dict())
+        error_state.error = f"Error comparing and explaining: {str(e)}"
+        error_state.current_step = "error"
+        return error_state.to_dict()
+
+# Helper function to convert between dictionary and state object
+def dict_to_state(state_dict: Dict) -> EnhancedPeerReviewState:
+    """Convert a dictionary to an EnhancedPeerReviewState object."""
+    return EnhancedPeerReviewState(**state_dict)
 
 # Router function to determine next step
-def router(state: EnhancedPeerReviewState) -> Literal["generate_problem", "analyze_review", "summarize_review", "compare_explain", "wait_for_review", "complete", "error"]:
+def router(state: Dict) -> Literal["generate_problem", "analyze_review", "summarize_review", "compare_explain", "wait_for_review", "complete", "error"]:
     """Determine the next step in the workflow."""
-    if state.error:
+    # Convert dict to state object if needed
+    if isinstance(state, dict):
+        state_obj = dict_to_state(state)
+    else:
+        state_obj = state
+        
+    if state_obj.error:
         return "error"
-    return state.current_step
+    return state_obj.current_step
 
 # Create the enhanced peer review agent graph
 def create_peer_review_agent():
     """Create and compile the enhanced peer review agent workflow."""
     
-    # Initialize the graph with the enhanced state
-    graph = StateGraph(EnhancedPeerReviewState)
+    # Fix: Use a dictionary-based StateGraph approach instead of object-based
+    graph = StateGraph(Dict)
     
     # Add nodes
     graph.add_node("generate_problem", generate_problem_node)
@@ -428,31 +462,31 @@ def run_peer_review_agent(
         max_iterations=max_iterations
     )
     
+    # Convert to dict for LangGraph
+    initial_state_dict = initial_state.to_dict()
+    
     # Create the agent
     agent = create_peer_review_agent()
     
     # Run the agent
     logger.info(f"Running peer review agent for {programming_language}")
     try:
-        result = agent.invoke(initial_state)
-        
-        # Convert the result to a dictionary
+        # Use the dictionary-based approach
+        result = agent.invoke(initial_state_dict)
+        print("result1: ", result)
+        # Convert the result back to an object just to ensure all data is properly structured
         try:
-            return result.dict()
+            result_obj = dict_to_state(result)
+            print(result_obj)
+            return result_obj.to_dict()
         except Exception as e:
-            logger.error(f"Error converting result to dict: {str(e)}")
-            return {
-                "programming_language": programming_language,
-                "problem_areas": problem_areas,
-                "difficulty_level": difficulty_level,
-                "code_length": code_length,
-                "code_snippet": getattr(result, "code_snippet", None),
-                "known_problems": getattr(result, "known_problems", []),
-                "error": f"Error converting result to dict: {str(e)}"
-            }
+            logger.error(f"Error converting result to object: {str(e)}")
+            # Return the raw result if conversion fails
+            return result
         
     except Exception as e:
-        logger.error(f"Error running agent: {str(e)}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error running agent: {str(e)}\n{error_traceback}")
         return {
             "programming_language": programming_language,
             "problem_areas": problem_areas,

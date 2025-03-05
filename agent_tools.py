@@ -14,7 +14,6 @@ import datetime
 from typing import List, Dict, Tuple, Optional, Any
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
 
 # Import the templates from updated prompts
 from agent_prompts import (
@@ -169,20 +168,44 @@ PROGRAMMING_PROBLEMS = {
     ]
 }
 
-class CodeProblemResult(BaseModel):
+class CodeProblemResult:
     """Output model for code problem generation."""
-    code_snippet: str = Field(description="The generated code snippet with intentional problems")
-    problems: List[str] = Field(description="List of intentional problems in the code")
-    raw_errors: Optional[List[Dict[str, Any]]] = Field(description="Original error data used for generation")
+    
+    def __init__(self, code_snippet, problems, raw_errors=None):
+        self.code_snippet = code_snippet  # The generated code snippet with intentional problems
+        self.problems = problems  # List of intentional problems in the code
+        self.raw_errors = raw_errors  # Original error data used for generation
+    
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            "code_snippet": self.code_snippet,
+            "problems": self.problems,
+            "raw_errors": self.raw_errors
+        }
 
-class ReviewAnalysisResult(BaseModel):
+class ReviewAnalysisResult:
     """Output model for review analysis."""
-    identified_problems: List[str] = Field(description="Problems correctly identified by student")
-    missed_problems: List[str] = Field(description="Problems missed by student")
-    false_positives: List[str] = Field(description="Issues incorrectly identified as problems")
-    accuracy_percentage: float = Field(description="Percentage of actual problems correctly identified")
-    review_sufficient: bool = Field(description="Whether the review found enough problems")
-    feedback: str = Field(description="General feedback on the review quality")
+    
+    def __init__(self, identified_problems, missed_problems, false_positives, 
+                 accuracy_percentage, review_sufficient, feedback):
+        self.identified_problems = identified_problems  # Problems correctly identified by student
+        self.missed_problems = missed_problems  # Problems missed by student
+        self.false_positives = false_positives  # Issues incorrectly identified as problems
+        self.accuracy_percentage = accuracy_percentage  # Percentage of actual problems correctly identified
+        self.review_sufficient = review_sufficient  # Whether the review found enough problems
+        self.feedback = feedback  # General feedback on the review quality
+    
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            "identified_problems": self.identified_problems,
+            "missed_problems": self.missed_problems,
+            "false_positives": self.false_positives,
+            "accuracy_percentage": self.accuracy_percentage,
+            "review_sufficient": self.review_sufficient,
+            "feedback": self.feedback
+        }
 
 def extract_json_from_text(text: str) -> Dict:
     """
@@ -194,25 +217,60 @@ def extract_json_from_text(text: str) -> Dict:
     Returns:
         Dict: Extracted JSON data or error dictionary
     """
-    # Try to find JSON block with regex
-    json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', text, re.DOTALL)
-    if json_match:
-        json_str = json_match.group(1)
-    else:
-        # Try to find any JSON-like structure
-        json_match = re.search(r'({.*})', text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Last resort: assume the whole text might be JSON
-            json_str = text
+    # Try to find JSON block with regex - handling different markdown code block styles
+    patterns = [
+        r'```json\s*([\s\S]*?)```',  # JSON code block
+        r'```\s*({[\s\S]*?})\s*```',  # Any JSON object in code block
+        r'({[\s\S]*"code_snippet"[\s\S]*"problems"[\s\S]*})',  # Look for our expected fields
+        r'({[\s\S]*})',  # Any JSON-like structure
+    ]
     
-    # Try to parse the JSON
+    # Try each pattern
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        for match in matches:
+            try:
+                # Clean up the match
+                json_str = match.strip()
+                # Try to parse as JSON
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+    
+    # If standard methods fail, try to manually construct a JSON object
     try:
-        return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Could not parse JSON response: {e}")
-        return {"error": "Could not parse JSON response"}
+        # Look for code block
+        code_block_match = re.search(r'```(?:\w+)?\s*(.*?)\s*```', text, re.DOTALL)
+        code_snippet = code_block_match.group(1) if code_block_match else ""
+        
+        # Look for problems section - different patterns
+        problems = []
+        # Try numbered list pattern
+        problems_list_match = re.findall(r'\d+\.\s+(.*?)(?=\d+\.|$)', text, re.DOTALL)
+        if problems_list_match:
+            problems = [p.strip() for p in problems_list_match if p.strip()]
+        
+        # Try bullet list pattern if numbered list didn't work
+        if not problems:
+            problems_list_match = re.findall(r'[-*•]\s+(.*?)(?=[-*•]|$)', text, re.DOTALL)
+            if problems_list_match:
+                problems = [p.strip() for p in problems_list_match if p.strip()]
+        
+        # Construct a valid JSON object
+        if code_snippet:
+            return {
+                "code_snippet": code_snippet,
+                "problems": problems
+            }
+    except Exception as e:
+        logger.warning(f"Manual JSON construction failed: {e}")
+    
+    # Last resort - return an error object with the raw text
+    logger.warning("Could not extract JSON, returning error object")
+    return {
+        "error": "Could not parse JSON response",
+        "raw_text": text[:500] + ("..." if len(text) > 500 else "")  # Include truncated raw text for debugging
+    }
 
 def extract_code_and_problems(text: str) -> Tuple[str, List[str]]:
     """
@@ -227,26 +285,50 @@ def extract_code_and_problems(text: str) -> Tuple[str, List[str]]:
     # Try to extract as JSON first
     try:
         json_data = extract_json_from_text(text)
-        if "code_snippet" in json_data and "problems" in json_data:
+        if "code_snippet" in json_data and "problems" in json_data and not "error" in json_data:
             return json_data["code_snippet"], json_data["problems"]
     except Exception as e:
         logger.warning(f"Error extracting JSON: {e}")
     
     # Fallback: extract code block and try to find problem list
-    code_match = re.search(r'```(?:\w+)?\s*(.*?)\s*```', text, re.DOTALL)
-    code_snippet = code_match.group(1) if code_match else ""
-    
-    # Try to find problems section
+    code_snippet = ""
     problems = []
-    # Fix: Simplified regex pattern and corrected the search function call
-    problems_section = re.search(r'problems?:?\s*(?:\n|:)(.*?)(?:\n\n|\n#|\Z)', text, re.DOTALL)
     
-    if problems_section:
-        problems_text = problems_section.group(1)
-        # Look for numbered or bulleted list items
-        problem_items = re.findall(r'(?:^|\n)\s*(?:\d+[.)]|-)\s*(.*?)(?=\n\s*(?:\d+[.)]|-)|$)', problems_text, re.DOTALL)
-        if problem_items:
-            problems = [p.strip() for p in problem_items if p.strip()]
+    # Extract code block
+    code_block_matches = re.findall(r'```(?:java)?\s*(.*?)\s*```', text, re.DOTALL)
+    if code_block_matches:
+        # Use the largest code block
+        code_snippet = max(code_block_matches, key=len)
+    
+    # Try to find problems section in various formats
+    problem_patterns = [
+        r'(?:Problems|Issues|Errors):\s*((?:\d+\.\s*.*?(?:\n|$))+)',  # Numbered list with header
+        r'(?:problems|issues|errors):\s*((?:[-*•]\s*.*?(?:\n|$))+)',  # Bullet list with header
+        r'(?:^|\n)(\d+\.\s*.*?)(?=\n\d+\.|\n\n|\Z)',  # Numbered list items
+        r'(?:^|\n)([-*•]\s*.*?)(?=\n[-*•]|\n\n|\Z)',  # Bullet list items
+    ]
+    
+    for pattern in problem_patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            for match in matches:
+                # For patterns with headers, extract individual items
+                if ":" in pattern:
+                    if r'\d+' in pattern:  # Numbered list
+                        items = re.findall(r'\d+\.\s*(.*?)(?=\n\d+\.|\n\n|\Z)', match, re.DOTALL)
+                    else:  # Bullet list
+                        items = re.findall(r'[-*•]\s*(.*?)(?=\n[-*•]|\n\n|\Z)', match, re.DOTALL)
+                    
+                    for item in items:
+                        if item.strip():
+                            problems.append(item.strip())
+                else:
+                    # Remove the numbering/bullet
+                    problem = re.sub(r'^\d+\.\s*|^[-*•]\s*', '', match)
+                    if problem.strip():
+                        problems.append(problem.strip())
+            if problems:
+                break
     
     return code_snippet, problems
 
@@ -322,6 +404,18 @@ You can use this template as a starting point:
 Please introduce the following problems into the code:
 {problems_to_introduce}
 
+Return your response in this format:
+```json
+{{
+  "code_snippet": "Your code here",
+  "problems": [
+    "Description of problem 1",
+    "Description of problem 2",
+    ...
+  ]
+}}
+```
+
 Remember to maintain the basic functionality while introducing these problems in a subtle way that's educational for students to identify.
 """)
     
@@ -387,21 +481,58 @@ def generate_java_code_problem(
     problem_descriptions = [format_java_error_description(error) for error in selected_errors]
     
     # Create and format the prompt
-    prompt = PromptTemplate.from_template(JAVA_GENERATE_CODE_PROBLEM_TEMPLATE)
+    system_prompt = """You are an expert Java programming educator who creates code review exercises. You will:
+1. Follow instructions exactly
+2. Create realistic Java code with intentional problems
+3. Return your response in valid JSON format with "code_snippet" and "problems" fields
+4. Ensure the JSON is properly formatted with proper escaping of quotes and special characters
+5. Include clear problem descriptions with their locations in the code"""
     
-    prompt_text = prompt.format(
+    prompt = """
+Please create a realistic Java code snippet that contains intentional problems for a code review exercise.
+
+Use this Java class template as a starting point:
+```java
+{template}
+```
+
+{error_injection_instructions}
+
+Return your response in this specific JSON format (ensure proper JSON formatting):
+```json
+{{
+  "code_snippet": "// Your Java code with intentional problems here",
+  "problems": [
+    "Description of problem 1 with location",
+    "Description of problem 2 with location",
+    "Description of problem 3 with location"
+  ]
+}}
+```
+
+Remember to maintain the basic functionality while introducing these problems in a subtle way that's educational for students to identify.
+"""
+    
+    formatted_prompt = prompt.format(
         template=java_template,
         error_injection_instructions=error_injection_instructions
     )
     
     # Run the LLM with the Java-specific prompt
     logger.info(f"Generating Java code problem with {len(selected_errors)} specific errors")
-    response = llm.invoke(JAVA_GENERATIVE_AGENT_PROMPT + "\n\n" + prompt_text)
+    response = llm.invoke(system_prompt + "\n\n" + formatted_prompt)
     
-    # Extract code and problems from the response
-    code_snippet, problems = extract_code_and_problems(response)
+    # Improved extraction of code and problems 
+    json_data = extract_json_from_text(response)
     
-    # If we couldn't extract problems from LLM response, use our predefined ones
+    if "code_snippet" in json_data and "problems" in json_data and not "error" in json_data:
+        code_snippet = json_data["code_snippet"]
+        problems = json_data["problems"]
+    else:
+        # Fallback to regex extraction
+        code_snippet, problems = extract_code_and_problems(response)
+    
+    # If we couldn't extract enough problems from LLM response, use our predefined ones
     if not problems or len(problems) < len(selected_errors) // 2:
         logger.warning("Couldn't extract enough problems from LLM response, using predefined ones")
         problems = problem_descriptions
@@ -423,7 +554,7 @@ def analyze_student_review(
 ) -> Dict:
     """
     Analyze how well a student's review identified known problems.
-    Enhanced with review sufficiency check.
+    Enhanced with better error identification and review sufficiency check.
     
     Args:
         code_snippet: The original code snippet
@@ -436,129 +567,113 @@ def analyze_student_review(
         Dictionary with analysis results
     """
     # Create and format the prompt
-    prompt = PromptTemplate.from_template("""
-Please analyze how well this student's review identifies the known problems in the code.
+    system_prompt = """You are an expert code review analyzer. When analyzing student reviews:
+1. Be thorough and accurate in your assessment
+2. Return your analysis in valid JSON format with proper escaping
+3. Provide constructive feedback that helps students improve
+4. Be precise in identifying which problems were found and which were missed
+5. Format your response as proper JSON"""
+    
+    prompt = """
+Please analyze how well the student's review identifies the known problems in the code.
 
-Original code snippet:
-```
+ORIGINAL CODE:
+```java
 {code_snippet}
 ```
 
-Known problems in the code:
+KNOWN PROBLEMS IN THE CODE:
 {known_problems}
 
-Student's review:
+STUDENT'S REVIEW:
 ```
 {student_review}
 ```
 
-Perform a detailed analysis of how well the student identified the issues.
-Remember to evaluate if they found enough problems (at least 60%) to demonstrate understanding.
-""")
+Carefully analyze how thoroughly and accurately the student identified the known problems.
+
+For each known problem, determine if the student correctly identified it, partially identified it, or missed it completely.
+Consider semantic matches - students may use different wording but correctly identify the same issue.
+
+Return your analysis in this exact JSON format:
+```json
+{{
+  "identified_problems": ["Problem 1 they identified correctly", "Problem 2 they identified correctly"],
+  "missed_problems": ["Problem 1 they missed", "Problem 2 they missed"],
+  "false_positives": ["Non-issue 1 they incorrectly flagged", "Non-issue 2 they incorrectly flagged"],
+  "accuracy_percentage": 75.0,
+  "review_sufficient": true,
+  "feedback": "Your general assessment of the review quality and advice for improvement"
+}}
+```
+
+A review is considered "sufficient" if the student correctly identified at least {min_percentage}% of the known problems.
+Be specific in your feedback about what types of issues they missed and how they can improve their code review skills.
+"""
     
-    prompt_text = prompt.format(
+    formatted_prompt = prompt.format(
         code_snippet=code_snippet,
         known_problems="\n".join([f"- {p}" for p in known_problems]),
-        student_review=student_review
+        student_review=student_review,
+        min_percentage=min_identified_percentage
     )
     
-    # Run the LLM with specific Java review prompt for Java code
+    # Run the LLM
     logger.info("Analyzing student review")
-    if "class" in code_snippet and ("{" in code_snippet and "}" in code_snippet):
-        # Looks like Java code
-        response = llm.invoke(JAVA_REVIEW_AGENT_PROMPT + "\n\n" + prompt_text)
-    else:
-        # Use generic prompt
-        response = llm.invoke(prompt_text)
+    response = llm.invoke(system_prompt + "\n\n" + formatted_prompt)
     
-    # Try to extract JSON data
+    # Try to extract JSON data using our improved function
+    analysis_data = extract_json_from_text(response)
+    
+    # Extract required fields with fallbacks
+    identified_problems = analysis_data.get("identified_problems", [])
+    missed_problems = analysis_data.get("missed_problems", [])
+    false_positives = analysis_data.get("false_positives", [])
+    
     try:
-        analysis_data = extract_json_from_text(response)
-        
-        # Extract required fields with fallbacks
-        identified_problems = analysis_data.get("identified_problems", [])
-        missed_problems = analysis_data.get("missed_problems", [])
-        false_positives = analysis_data.get("false_positives", [])
         accuracy_percentage = float(analysis_data.get("accuracy_percentage", 50.0))
-        feedback = analysis_data.get("feedback", "The analysis was partially completed.")
+    except (TypeError, ValueError):
+        accuracy_percentage = 50.0
         
-        # Determine if review is sufficient based on identified percentage
-        identified_count = len(identified_problems)
-        total_problems = len(known_problems)
+    feedback = analysis_data.get("feedback", "The analysis was partially completed.")
+    
+    # Determine if review is sufficient based on identified percentage
+    identified_count = len(identified_problems)
+    total_problems = len(known_problems)
+    
+    if total_problems > 0:
+        identified_percentage = (identified_count / total_problems) * 100
+    else:
+        identified_percentage = 100.0
         
-        if total_problems > 0:
-            identified_percentage = (identified_count / total_problems) * 100
-        else:
-            identified_percentage = 100.0
-            
-        # Check if model didn't provide review_sufficient field
-        if "review_sufficient" not in analysis_data:
-            review_sufficient = identified_percentage >= min_identified_percentage
-        else:
-            review_sufficient = analysis_data["review_sufficient"]
-        
-        return {
-            "identified_problems": identified_problems,
-            "missed_problems": missed_problems,
-            "false_positives": false_positives,
-            "accuracy_percentage": accuracy_percentage,
-            "identified_percentage": identified_percentage,
-            "identified_count": identified_count,
-            "total_problems": total_problems,
-            "review_sufficient": review_sufficient,
-            "feedback": feedback
-        }
-    except Exception as e:
-        logger.warning(f"Error parsing analysis JSON: {e}, falling back to regex extraction")
-        # If parsing fails, return a simplified analysis
-        identified = []
-        missed = []
-        
-        # Try to extract identified and missed problems with regex
-        identified_match = re.search(r'identified(?:\s+problems)?(?:\s*:|\s*-)(.*?)(?=missed|false|$)', 
-                                     response, re.IGNORECASE | re.DOTALL)
-        if identified_match:
-            identified_text = identified_match.group(1)
-            identified = re.findall(r'(?:^|\n)\s*(?:-|\d+[.)])\s*(.*?)(?=\n\s*(?:-|\d+[.)])|$)', 
-                                   identified_text, re.DOTALL)
-            identified = [i.strip() for i in identified if i.strip()]
-        
-        missed_match = re.search(r'missed(?:\s+problems)?(?:\s*:|\s*-)(.*?)(?=identified|false|$)', 
-                                 response, re.IGNORECASE | re.DOTALL)
-        if missed_match:
-            missed_text = missed_match.group(1)
-            missed = re.findall(r'(?:^|\n)\s*(?:-|\d+[.)])\s*(.*?)(?=\n\s*(?:-|\d+[.)])|$)', 
-                               missed_text, re.DOTALL)
-            missed = [m.strip() for m in missed if m.strip()]
-        
-        # Calculate a basic accuracy
-        if not identified and not missed:
-            accuracy = 50.0
-        else:
-            accuracy = len(identified) / max(1, len(identified) + len(missed)) * 100
-        
-        # Determine if review is sufficient
-        identified_count = len(identified)
-        total_problems = len(known_problems)
-        
-        if total_problems > 0:
-            identified_percentage = (identified_count / total_problems) * 100
-        else:
-            identified_percentage = 100.0
-            
+    # Check if model didn't provide review_sufficient field
+    if "review_sufficient" not in analysis_data:
         review_sufficient = identified_percentage >= min_identified_percentage
-                
-        return {
-            "identified_problems": identified or ["Some problems were identified"],
-            "missed_problems": missed or ["Some problems may have been missed"],
-            "false_positives": [],
-            "accuracy_percentage": accuracy,
-            "identified_percentage": identified_percentage,
-            "identified_count": identified_count,
-            "total_problems": total_problems,
-            "review_sufficient": review_sufficient,
-            "feedback": "The student has partially identified the issues in the code."
-        }
+    else:
+        review_sufficient = analysis_data["review_sufficient"]
+    
+    # Provide more detailed feedback for insufficient reviews
+    if not review_sufficient and feedback == "The analysis was partially completed.":
+        if identified_percentage < 30:
+            feedback = ("Your review missed most of the critical issues in the code. "
+                        "Try to look more carefully for logic errors, style violations, "
+                        "and potential runtime exceptions.")
+        else:
+            feedback = ("Your review found some issues but missed important problems. "
+                        f"You identified {identified_percentage:.1f}% of the known issues. "
+                        "Try to be more thorough in your next review.")
+    
+    return {
+        "identified_problems": identified_problems,
+        "missed_problems": missed_problems,
+        "false_positives": false_positives,
+        "accuracy_percentage": accuracy_percentage,
+        "identified_percentage": identified_percentage,
+        "identified_count": identified_count,
+        "total_problems": total_problems,
+        "review_sufficient": review_sufficient,
+        "feedback": feedback
+    }
 
 def generate_targeted_guidance(
     code_snippet: str,
@@ -571,6 +686,7 @@ def generate_targeted_guidance(
 ) -> str:
     """
     Generate targeted guidance for missed errors to help with next review attempt.
+    Enhanced with more detailed feedback.
     
     Args:
         code_snippet: The original code snippet
@@ -585,9 +701,53 @@ def generate_targeted_guidance(
         Guidance text
     """
     # Prepare the prompt
-    prompt = PromptTemplate.from_template(ITERATIVE_REVIEW_FEEDBACK_TEMPLATE)
+    system_prompt = """You are an expert Java programming mentor who provides constructive feedback to students.
+Your guidance is:
+1. Encouraging and supportive
+2. Specific and actionable
+3. Educational - teaching students how to find issues rather than just telling them what to find
+4. Focused on developing their review skills
+5. Balanced - acknowledging what they did well while guiding them to improve"""
     
-    prompt_text = prompt.format(
+    prompt = """
+Please create targeted guidance for a student who has reviewed Java code but missed some important errors.
+
+ORIGINAL JAVA CODE:
+```java
+{code_snippet}
+```
+
+KNOWN PROBLEMS IN THE CODE:
+{known_problems}
+
+STUDENT'S REVIEW ATTEMPT #{iteration_count} of {max_iterations}:
+```
+{student_review}
+```
+
+PROBLEMS CORRECTLY IDENTIFIED BY THE STUDENT:
+{identified_problems}
+
+PROBLEMS MISSED BY THE STUDENT:
+{missed_problems}
+
+The student has identified {identified_count} out of {total_problems} issues ({identified_percentage:.1f}%).
+
+Create constructive guidance that:
+1. Acknowledges what the student found correctly with specific praise
+2. Provides hints about the types of errors they missed (without directly listing them all)
+3. Suggests specific areas of the code to examine more carefully
+4. Encourages them to look for particular Java error patterns they may have overlooked
+5. If there are false positives, gently explain why those are not actually issues
+6. End with specific questions that might help the student find the missed problems
+
+The guidance should be educational and help the student improve their Java code review skills.
+Focus on teaching them how to identify the types of issues they missed.
+
+Be encouraging but specific. Help the student develop a more comprehensive approach to code review.
+"""
+    
+    formatted_prompt = prompt.format(
         code_snippet=code_snippet,
         known_problems="\n".join([f"- {p}" for p in known_problems]),
         student_review=student_review,
@@ -602,7 +762,7 @@ def generate_targeted_guidance(
     
     # Run the LLM
     logger.info("Generating targeted guidance for review iteration")
-    guidance = llm.invoke(prompt_text)
+    guidance = llm.invoke(system_prompt + "\n\n" + formatted_prompt)
     
     return guidance
 
@@ -623,26 +783,39 @@ def summarize_review_comments(
         Summarized review comments
     """
     # Create and format the prompt
-    prompt = PromptTemplate.from_template("""
+    system_prompt = """You are an expert in synthesizing technical information about Java code. Your summaries are:
+1. Clear and concise
+2. Well-structured and organized
+3. Focused on the most important issues
+4. Educational and actionable
+5. Prioritized by severity and importance"""
+    
+    prompt = """
 Please create a clear, concise summary of the following code review comments:
 
 ```
 {review_comments}
 ```
 
-Create a well-structured summary that groups related issues and focuses on the most important points.
-""")
+Create a well-structured summary that:
+1. Groups related issues together (e.g., style issues, logical errors, etc.)
+2. Prioritizes issues by importance/severity
+3. Is easy to understand for a Java programming student
+4. Highlights patterns or common themes in the review
+
+Your summary should be educational and actionable.
+"""
     
-    prompt_text = prompt.format(
+    formatted_prompt = prompt.format(
         review_comments=review_comments
     )
     
     # Run the LLM
     logger.info("Generating review summary")
     if is_java:
-        summary = llm.invoke(JAVA_SUMMARY_AGENT_PROMPT + "\n\n" + prompt_text)
+        summary = llm.invoke(system_prompt + "\n\n" + formatted_prompt)
     else:
-        summary = llm.invoke(prompt_text)
+        summary = llm.invoke(formatted_prompt)
     
     return summary
 
@@ -674,11 +847,18 @@ def compare_and_explain(
         Educational feedback explaining the comparison
     """
     # Create and format the prompt
+    system_prompt = """You are an expert Java programming educator specializing in teaching code review skills. Your educational reports are:
+1. Encouraging and constructive
+2. Specific about both strengths and areas for improvement
+3. Educational, explaining why issues matter in Java
+4. Practical, with tips for better identifying similar issues in the future
+5. Supportive of the student's learning journey"""
+    
     base_prompt = """
 Please create an educational report comparing the student's code review with the known problems in the code.
 
 Original code snippet:
-```
+```java
 {code_snippet}
 ```
 
@@ -716,9 +896,8 @@ Review summary:
             history_text += f"({review_analysis.get('accuracy_percentage', 0):.1f}% accuracy)\n"
         base_prompt += history_text
 
-    prompt = PromptTemplate.from_template(base_prompt)
-    
-    prompt_text = prompt.format(
+    # Format the prompt
+    formatted_prompt = base_prompt.format(
         code_snippet=code_snippet,
         known_problems="\n".join([f"- {p}" for p in known_problems]),
         student_review=student_review,
@@ -732,8 +911,8 @@ Review summary:
     # Run the LLM
     logger.info("Generating comparison report")
     if is_java:
-        comparison = llm.invoke(JAVA_COMPARE_EXPLAIN_AGENT_PROMPT + "\n\n" + prompt_text)
+        comparison = llm.invoke(system_prompt + "\n\n" + formatted_prompt)
     else:
-        comparison = llm.invoke(prompt_text)
+        comparison = llm.invoke(formatted_prompt)
     
     return comparison
