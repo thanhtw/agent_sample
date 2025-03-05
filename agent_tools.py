@@ -335,7 +335,7 @@ def generate_code_problem(
     
     # Extract code and problems from the response
     code_snippet, problems = extract_code_and_problems(response)
-    
+    print(code_snippet)
     # If we couldn't extract problems, use the selected ones
     if not problems:
         logger.warning("Could not extract problems from LLM response, using selected problems")

@@ -414,24 +414,67 @@ def run_peer_review_agent(
     
     # Run the agent
     logger.info(f"Running peer review agent for {programming_language}")
-    result = agent.invoke(initial_state)
-    
-    # Return the final state as a dictionary
-    # Using manual conversion to avoid compatibility issues
-    return {
-        "programming_language": result.programming_language,
-        "problem_areas": result.problem_areas,
-        "difficulty_level": result.difficulty_level,
-        "code_length": result.code_length,
-        "code_snippet": result.code_snippet,
-        "known_problems": result.known_problems,
-        "student_review": result.student_review,
-        "review_analysis": result.review_analysis,
-        "review_summary": result.review_summary,
-        "comparison_report": result.comparison_report,
-        "current_step": result.current_step,
-        "error": result.error
-    }
+    try:
+        result = agent.invoke(initial_state)
+        
+        # Create a manually constructed result dictionary
+        output = {}
+        
+        # Try to extract attributes safely
+        try:
+            if hasattr(result, "programming_language"):
+                output["programming_language"] = result.programming_language
+            else:
+                output["programming_language"] = programming_language
+                
+            if hasattr(result, "problem_areas"):
+                output["problem_areas"] = result.problem_areas
+            else:
+                output["problem_areas"] = problem_areas
+                
+            if hasattr(result, "difficulty_level"):
+                output["difficulty_level"] = result.difficulty_level
+            else:
+                output["difficulty_level"] = difficulty_level
+                
+            if hasattr(result, "code_length"):
+                output["code_length"] = result.code_length
+            else:
+                output["code_length"] = code_length
+            
+            # Extract other attributes carefully
+            for attr in ["code_snippet", "known_problems", "student_review", 
+                        "review_analysis", "review_summary", "comparison_report", 
+                        "current_step", "error"]:
+                if hasattr(result, attr):
+                    output[attr] = getattr(result, attr)
+                else:
+                    output[attr] = None
+                    
+        except Exception as e:
+            logger.error(f"Error accessing result attributes: {str(e)}")
+            # Provide at least the code and problems if available
+            output = {
+                "programming_language": programming_language,
+                "problem_areas": problem_areas,
+                "difficulty_level": difficulty_level,
+                "code_length": code_length,
+                "code_snippet": getattr(result, "code_snippet", None),
+                "known_problems": getattr(result, "known_problems", []),
+                "error": f"Error accessing result attributes: {str(e)}"
+            }
+        
+        return output
+        
+    except Exception as e:
+        logger.error(f"Error running agent: {str(e)}")
+        return {
+            "programming_language": programming_language,
+            "problem_areas": problem_areas,
+            "difficulty_level": difficulty_level,
+            "code_length": code_length,
+            "error": f"Error running agent: {str(e)}"
+        }
 
 if __name__ == "__main__":
     # This code will only run when executing this file directly
