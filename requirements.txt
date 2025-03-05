@@ -1,0 +1,7 @@
+streamlit
+langchain
+langgraph
+langchain-community
+langchain-core
+pydantic>=2.0.0
+python-dotenv
