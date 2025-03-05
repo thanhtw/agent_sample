@@ -4,6 +4,7 @@ Enhanced Streamlit app for the Java Peer Code Review Training System.
 This module provides a web interface with iterative review support,
 allowing users to generate Java code problems, submit reviews,
 receive feedback, and iterate on their reviews when needed.
+Enhanced with specific error category selection.
 """
 
 import streamlit as st
@@ -11,6 +12,7 @@ import os
 import logging
 import time
 import datetime
+import json
 from typing import Dict, List, Any
 from agent import run_peer_review_agent
 from dotenv import load_dotenv
@@ -18,6 +20,9 @@ from dotenv import load_dotenv
 # Import LLM Manager and UI components
 from llm_manager import LLMManager
 from model_setup_ui import ModelSetupUI
+
+# Import Java error handler to get available error categories
+from java_error_handler import get_all_error_categories, get_all_error_types
 
 # Configure logging
 logging.basicConfig(
@@ -156,8 +161,67 @@ st.markdown("""
             color: #808080;
             font-style: italic;
         }
+        .error-type-header {
+            background-color: #f1f8ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .error-category {
+            border-left: 3px solid #2196F3;
+            padding-left: 10px;
+            margin: 5px 0;
+        }
+        .subcategory-container {
+            margin-left: 20px;
+            border-left: 2px solid #e6e6e6;
+            padding-left: 10px;
+            margin-top: 5px;
+            margin-bottom: 15px;
+        }
+        .error-item {
+            margin: 5px 0;
+            padding: 3px 5px;
+            font-size: 0.9em;
+            background-color: #f9f9f9;
+            border-radius: 3px;
+        }
+        .show-hide-btn {
+            background-color: #f1f8ff;
+            border: 1px solid #ddedff;
+            color: #0366d6;
+            padding: 2px 8px;
+            font-size: 0.8em;
+            border-radius: 4px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
     </style>
 """, unsafe_allow_html=True)
+
+def add_line_numbers(code: str) -> str:
+    """
+    Add line numbers to code snippet.
+    
+    Args:
+        code (str): The code snippet to add line numbers to
+        
+    Returns:
+        str: Code with line numbers
+    """
+    lines = code.splitlines()
+    max_line_num = len(lines)
+    padding = len(str(max_line_num))
+    
+    # Create a list of lines with line numbers
+    numbered_lines = []
+    for i, line in enumerate(lines, 1):
+        # Format line number with consistent padding
+        line_num = str(i).rjust(padding)
+        numbered_lines.append(f"{line_num} | {line}")
+    
+    return "\n".join(numbered_lines)
 
 def initialize_session_state():
     """Initialize session state variables if they don't exist."""
@@ -195,6 +259,14 @@ def initialize_session_state():
         st.session_state.review_history = []
     if 'raw_errors' not in st.session_state:
         st.session_state.raw_errors = None
+        
+    # New fields for error category selection
+    if 'selected_error_categories' not in st.session_state:
+        st.session_state.selected_error_categories = {"build": [], "checkstyle": []}
+    if 'error_selection_mode' not in st.session_state:
+        st.session_state.error_selection_mode = "standard"  # "standard" or "advanced"
+    if 'expanded_categories' not in st.session_state:
+        st.session_state.expanded_categories = {}
 
 def check_model_status():
     """Check the status of all required models."""
@@ -220,7 +292,7 @@ def check_model_status():
     
     return status
 
-def generate_problem(programming_language, problem_areas, difficulty_level, code_length):
+def generate_problem(programming_language, problem_areas, difficulty_level, code_length, selected_error_categories=None):
     """Generate a code problem with a progress bar."""
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -231,16 +303,48 @@ def generate_problem(programming_language, problem_areas, difficulty_level, code
         progress_bar.progress(10)
         time.sleep(0.5)
         
+        # Log the selected error categories for debugging
+        if selected_error_categories:
+            logger.info(f"Using selected error categories: {json.dumps(selected_error_categories)}")
+        
         status_text.text("Generating Java code problem...")
         progress_bar.progress(30)
         
         # Convert inputs to lowercase for the backend
-        result = run_peer_review_agent(
-            programming_language=programming_language.lower(),
-            problem_areas=[area.lower() for area in problem_areas],
-            difficulty_level=difficulty_level.lower(),
-            code_length=code_length.lower()
-        )
+        # Include selected error categories if in advanced mode
+        if selected_error_categories and st.session_state.error_selection_mode == "advanced":
+            # Ensure we only pass non-empty categories
+            filtered_categories = {
+                "build": [c for c in selected_error_categories["build"] if c],
+                "checkstyle": [c for c in selected_error_categories["checkstyle"] if c]
+            }
+            
+            # Only pass if we have at least one category selected
+            if filtered_categories["build"] or filtered_categories["checkstyle"]:
+                logger.info(f"Using filtered error categories: {json.dumps(filtered_categories)}")
+                result = run_peer_review_agent(
+                    programming_language=programming_language.lower(),
+                    problem_areas=[area.lower() for area in problem_areas],
+                    difficulty_level=difficulty_level.lower(),
+                    code_length=code_length.lower(),
+                    specific_error_categories=filtered_categories
+                )
+            else:
+                # Fall back to standard mode if no categories selected
+                logger.info("No error categories selected, falling back to standard mode")
+                result = run_peer_review_agent(
+                    programming_language=programming_language.lower(),
+                    problem_areas=[area.lower() for area in problem_areas],
+                    difficulty_level=difficulty_level.lower(),
+                    code_length=code_length.lower()
+                )
+        else:
+            result = run_peer_review_agent(
+                programming_language=programming_language.lower(),
+                problem_areas=[area.lower() for area in problem_areas],
+                difficulty_level=difficulty_level.lower(),
+                code_length=code_length.lower()
+            )
         
         progress_bar.progress(90)
         status_text.text("Finalizing results...")
@@ -296,16 +400,30 @@ def analyze_review():
         status_text.text("Analyzing your review...")
         progress_bar.progress(40)
         
-        result = run_peer_review_agent(
-            student_review=st.session_state.student_review,
-            # Use the same parameters as before
-            programming_language=programming_language.lower(),
-            problem_areas=[area.lower() for area in problem_areas],
-            difficulty_level=difficulty_level.lower(),
-            code_length=code_length.lower(),
-            iteration_count=iteration_count,
-            max_iterations=max_iterations
-        )
+        # Include selected error categories if in advanced mode
+        if st.session_state.error_selection_mode == "advanced":
+            result = run_peer_review_agent(
+                student_review=st.session_state.student_review,
+                # Use the same parameters as before
+                programming_language=programming_language.lower(),
+                problem_areas=[area.lower() for area in problem_areas],
+                difficulty_level=difficulty_level.lower(),
+                code_length=code_length.lower(),
+                iteration_count=iteration_count,
+                max_iterations=max_iterations,
+                specific_error_categories=st.session_state.selected_error_categories
+            )
+        else:
+            result = run_peer_review_agent(
+                student_review=st.session_state.student_review,
+                # Use the same parameters as before
+                programming_language=programming_language.lower(),
+                problem_areas=[area.lower() for area in problem_areas],
+                difficulty_level=difficulty_level.lower(),
+                code_length=code_length.lower(),
+                iteration_count=iteration_count,
+                max_iterations=max_iterations
+            )
         
         status_text.text("Generating feedback...")
         progress_bar.progress(70)
@@ -343,6 +461,168 @@ def analyze_review():
         status_text.empty()
         st.session_state.error = str(e)
         return False
+
+def display_error_category_selection():
+    """Display advanced error category selection interface with subitems."""
+    # Get all error categories
+    all_categories = get_all_error_categories()
+    all_error_types = get_all_error_types()
+    
+    st.subheader("Select Specific Error Categories")
+    st.info("Choose specific error categories to include in the generated Java code.")
+    
+    # Add CSS for nested subcategory display
+    st.markdown("""
+    <style>
+        .subcategory-container {
+            margin-left: 20px;
+            border-left: 2px solid #e6e6e6;
+            padding-left: 10px;
+        }
+        .error-item {
+            margin: 5px 0;
+            padding: 3px 0;
+            font-size: 0.9em;
+        }
+        .category-header {
+            font-weight: bold;
+            margin-top: 10px;
+            background-color: #f1f1f1;
+            padding: 5px;
+            border-radius: 5px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Initialize state for expanded categories if not exists
+    if 'expanded_categories' not in st.session_state:
+        st.session_state.expanded_categories = {}
+    
+    # Build errors
+    st.markdown("<div class='error-type-header'>Build Errors</div>", unsafe_allow_html=True)
+    build_categories = all_categories["build"]
+    
+    # Create a multi-column layout for build errors
+    build_cols = st.columns(2)
+    
+    # Split the build categories into two columns
+    half_length = len(build_categories) // 2
+    for i, col in enumerate(build_cols):
+        start_idx = i * half_length
+        end_idx = start_idx + half_length if i == 0 else len(build_categories)
+        
+        with col:
+            for category in build_categories[start_idx:end_idx]:
+                # Show how many errors in this category
+                error_count = len(all_error_types["build"].get(category, []))
+                category_label = f"{category} ({error_count} errors)"
+                
+                # Create a unique key for this category
+                category_key = f"build_{category}"
+                
+                # Check if category is selected
+                is_selected = st.checkbox(category_label, key=category_key)
+                
+                # Update selection state
+                if is_selected:
+                    if category not in st.session_state.selected_error_categories["build"]:
+                        st.session_state.selected_error_categories["build"].append(category)
+                else:
+                    if category in st.session_state.selected_error_categories["build"]:
+                        st.session_state.selected_error_categories["build"].remove(category)
+                
+                # Show expand/collapse control if there are errors
+                if error_count > 0:
+                    # Initialize expanded state for this category if it doesn't exist
+                    if category_key not in st.session_state.expanded_categories:
+                        st.session_state.expanded_categories[category_key] = False
+                    
+                    # Show expand/collapse button
+                    if st.button(f"{'▼ Show' if not st.session_state.expanded_categories[category_key] else '▲ Hide'} specific errors", 
+                               key=f"toggle_{category_key}"):
+                        st.session_state.expanded_categories[category_key] = not st.session_state.expanded_categories[category_key]
+                    
+                    # Display subitems if expanded
+                    if st.session_state.expanded_categories[category_key]:
+                        st.markdown("<div class='subcategory-container'>", unsafe_allow_html=True)
+                        # Display error subitems
+                        for error in all_error_types["build"].get(category, []):
+                            error_name = error.get("error_name", "Unknown error")
+                            error_desc = error.get("description", "")
+                            st.markdown(f"<div class='error-item'><b>{error_name}</b>: {error_desc}</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Checkstyle errors
+    st.markdown("<div class='error-type-header'>Checkstyle Errors</div>", unsafe_allow_html=True)
+    checkstyle_categories = all_categories["checkstyle"]
+    
+    # Create a multi-column layout for checkstyle errors
+    checkstyle_cols = st.columns(2)
+    
+    # Split the checkstyle categories into two columns
+    half_length = len(checkstyle_categories) // 2
+    for i, col in enumerate(checkstyle_cols):
+        start_idx = i * half_length
+        end_idx = start_idx + half_length if i == 0 else len(checkstyle_categories)
+        
+        with col:
+            for category in checkstyle_categories[start_idx:end_idx]:
+                # Show how many errors in this category
+                error_count = len(all_error_types["checkstyle"].get(category, []))
+                category_label = f"{category} ({error_count} errors)"
+                
+                # Create a unique key for this category
+                category_key = f"checkstyle_{category}"
+                
+                # Check if category is selected
+                is_selected = st.checkbox(category_label, key=category_key)
+                
+                # Update selection state
+                if is_selected:
+                    if category not in st.session_state.selected_error_categories["checkstyle"]:
+                        st.session_state.selected_error_categories["checkstyle"].append(category)
+                else:
+                    if category in st.session_state.selected_error_categories["checkstyle"]:
+                        st.session_state.selected_error_categories["checkstyle"].remove(category)
+                
+                # Show expand/collapse control if there are errors
+                if error_count > 0:
+                    # Initialize expanded state for this category if it doesn't exist
+                    if category_key not in st.session_state.expanded_categories:
+                        st.session_state.expanded_categories[category_key] = False
+                    
+                    # Show expand/collapse button
+                    if st.button(f"{'▼ Show' if not st.session_state.expanded_categories[category_key] else '▲ Hide'} specific errors", 
+                               key=f"toggle_{category_key}"):
+                        st.session_state.expanded_categories[category_key] = not st.session_state.expanded_categories[category_key]
+                    
+                    # Display subitems if expanded
+                    if st.session_state.expanded_categories[category_key]:
+                        st.markdown("<div class='subcategory-container'>", unsafe_allow_html=True)
+                        # Display error subitems
+                        for error in all_error_types["checkstyle"].get(category, []):
+                            error_name = error.get("check_name", "Unknown error")
+                            error_desc = error.get("description", "")
+                            st.markdown(f"<div class='error-item'><b>{error_name}</b>: {error_desc}</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Show selected categories
+    build_selected = st.session_state.selected_error_categories["build"]
+    checkstyle_selected = st.session_state.selected_error_categories["checkstyle"]
+    
+    st.write("### Selected Categories")
+    if not build_selected and not checkstyle_selected:
+        st.warning("No categories selected. Default categories will be used.")
+    else:
+        if build_selected:
+            st.write("Build Error Categories:")
+            for category in build_selected:
+                st.markdown(f"<div class='error-category'>{category}</div>", unsafe_allow_html=True)
+        
+        if checkstyle_selected:
+            st.write("Checkstyle Error Categories:")
+            for category in checkstyle_selected:
+                st.markdown(f"<div class='error-category'>{category}</div>", unsafe_allow_html=True)
 
 def display_results():
     """Display the analysis results and feedback."""
@@ -413,7 +693,7 @@ def display_results():
         # Reset session state
         for key in list(st.session_state.keys()):
             # Keep model configuration
-            if key not in ["models_configured", "show_model_setup"]:
+            if key not in ["models_configured", "show_model_setup", "error_selection_mode"]:
                 del st.session_state[key]
         
         # Initialize session state again
@@ -551,27 +831,62 @@ def main():
                 key="difficulty_level_select"
             )
             
+            # Error selection mode toggle
+            error_mode = st.radio(
+                "Error Selection Mode",
+                options=["Standard (by problem areas)", "Advanced (by specific error categories)"],
+                index=0 if st.session_state.error_selection_mode == "standard" else 1,
+                key="error_mode_select"
+            )
+            
+            # Update error selection mode
+            if "Standard" in error_mode and st.session_state.error_selection_mode != "standard":
+                st.session_state.error_selection_mode = "standard"
+                # Reset selected categories
+                st.session_state.selected_error_categories = {"build": [], "checkstyle": []}
+            elif "Advanced" in error_mode and st.session_state.error_selection_mode != "advanced":
+                st.session_state.error_selection_mode = "advanced"
+            
             # Update session state when widgets change
             st.session_state.difficulty_level = difficulty_level
         
         with col2:
-            problem_areas = st.multiselect(
-                "Problem Areas",
-                ["Style", "Logical", "Performance", "Security", "Design"],
-                default=st.session_state.problem_areas,
-                key="problem_areas_select"
-            )
-            
-            code_length = st.select_slider(
-                "Code Length",
-                options=["Short", "Medium", "Long"],
-                value=st.session_state.code_length,
-                key="code_length_select"
-            )
-            
-            # Update session state when widgets change
-            st.session_state.problem_areas = problem_areas
-            st.session_state.code_length = code_length
+            # Show standard problem area selection if in standard mode
+            if st.session_state.error_selection_mode == "standard":
+                problem_areas = st.multiselect(
+                    "Problem Areas",
+                    ["Style", "Logical", "Performance", "Security", "Design"],
+                    default=st.session_state.problem_areas,
+                    key="problem_areas_select"
+                )
+                
+                code_length = st.select_slider(
+                    "Code Length",
+                    options=["Short", "Medium", "Long"],
+                    value=st.session_state.code_length,
+                    key="code_length_select"
+                )
+                
+                # Update session state when widgets change
+                st.session_state.problem_areas = problem_areas
+                st.session_state.code_length = code_length
+            else:
+                # In advanced mode, code length is still needed
+                code_length = st.select_slider(
+                    "Code Length",
+                    options=["Short", "Medium", "Long"],
+                    value=st.session_state.code_length,
+                    key="code_length_select"
+                )
+                
+                # Update session state
+                st.session_state.code_length = code_length
+                # Use empty list for problem areas as we'll be using specific categories
+                st.session_state.problem_areas = []
+        
+        # Show advanced error category selection if in advanced mode
+        if st.session_state.error_selection_mode == "advanced":
+            display_error_category_selection()
         
         generate_button = st.button(
             "Generate Java Code Problem", 
@@ -584,12 +899,22 @@ def main():
         
         if generate_button:
             with st.spinner("Generating Java code problem with intentional issues..."):
-                success = generate_problem(
-                    "Java",  # Now fixed to Java
-                    problem_areas,
-                    difficulty_level,
-                    code_length
-                )
+                # Pass selected error categories if in advanced mode
+                if st.session_state.error_selection_mode == "advanced":
+                    success = generate_problem(
+                        "Java",  # Now fixed to Java
+                        st.session_state.problem_areas,
+                        difficulty_level,
+                        code_length,
+                        st.session_state.selected_error_categories
+                    )
+                else:
+                    success = generate_problem(
+                        "Java",  # Now fixed to Java
+                        problem_areas,
+                        difficulty_level,
+                        code_length
+                    )
                 
                 if success:
                     st.rerun()
@@ -597,7 +922,9 @@ def main():
         # Display existing code if available
         if st.session_state.code_snippet:
             st.subheader("Generated Java Code with Intentional Problems:")
-            st.code(st.session_state.code_snippet, language="java")
+            # Add line numbers to the code snippet
+            numbered_code = add_line_numbers(st.session_state.code_snippet)
+            st.code(numbered_code, language="java")
             
             # IMPORTANT: In a real application, we would NOT show the known problems
             # We're showing them here just for demonstration purposes
@@ -644,7 +971,9 @@ def main():
             
             # Display the code for review
             st.subheader("Java Code to Review:")
-            st.code(st.session_state.code_snippet, language="java")
+            # Add line numbers to the code snippet
+            numbered_code = add_line_numbers(st.session_state.code_snippet)
+            st.code(numbered_code, language="java")
             
             # Student review input
             st.subheader("Your Review:")

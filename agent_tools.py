@@ -11,7 +11,7 @@ import re
 import json
 import logging
 import datetime
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Set
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 
@@ -29,9 +29,10 @@ from agent_prompts import (
 # Import Java error handler
 from java_error_handler import (
     select_java_template,
-    select_java_errors,
+    select_java_errors_by_categories,
     format_java_error_description,
-    get_error_injection_instructions
+    get_error_injection_instructions,
+    get_all_error_categories
 )
 
 # Configure logging
@@ -337,11 +338,12 @@ def generate_code_problem(
     problem_areas: List[str], 
     difficulty_level: str,
     code_length: str,
-    llm: BaseLanguageModel
+    llm: BaseLanguageModel,
+    specific_error_categories: Dict[str, List[str]] = None
 ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
     """
     Generate a code snippet with intentional problems for review.
-    Now with enhanced Java support.
+    Now with enhanced Java support and specific error category selection.
     
     Args:
         programming_language: The programming language to use
@@ -349,13 +351,20 @@ def generate_code_problem(
         difficulty_level: Difficulty level of the problems
         code_length: Approximate length of code
         llm: Language model to use
+        specific_error_categories: Optional dictionary with 'build' and 'checkstyle' keys containing lists of specific error categories
         
     Returns:
         Tuple of (code_snippet, list_of_problems, raw_errors)
     """
     # Special handling for Java
     if programming_language.lower() == "java":
-        return generate_java_code_problem(problem_areas, difficulty_level, code_length, llm)
+        return generate_java_code_problem(
+            problem_areas, 
+            difficulty_level, 
+            code_length, 
+            llm, 
+            specific_error_categories
+        )
     
     # For other languages, use the original implementation
     # Select a few random problem types from each requested area
@@ -453,7 +462,8 @@ def generate_java_code_problem(
     problem_areas: List[str],
     difficulty_level: str,
     code_length: str,
-    llm: BaseLanguageModel
+    llm: BaseLanguageModel,
+    specific_error_categories: Dict[str, List[str]] = None
 ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
     """
     Generate a Java code snippet with intentional problems using errors from
@@ -464,6 +474,7 @@ def generate_java_code_problem(
         difficulty_level: Difficulty level of the problems
         code_length: Approximate length of code
         llm: Language model to use
+        specific_error_categories: Optional dictionary with 'build' and 'checkstyle' keys containing lists of specific error categories
         
     Returns:
         Tuple of (code_snippet, list_of_problems, raw_errors)
@@ -471,8 +482,43 @@ def generate_java_code_problem(
     # Get a Java template
     java_template = select_java_template(code_length)
     
-    # Select Java-specific errors based on problem areas and difficulty
-    selected_errors = select_java_errors(problem_areas, difficulty_level)
+    # Select Java-specific errors based on specific categories or problem areas
+    if specific_error_categories:
+        selected_errors = select_java_errors_by_categories(specific_error_categories, difficulty_level)
+    else:
+        # Create category mapping from problem areas
+        selected_categories = {"build": [], "checkstyle": []}
+        
+        # Map problem areas to Java error categories
+        area_to_build_errors = {
+            "logical": ["LogicalErrors"],
+            "performance": ["RuntimeErrors"],
+            "security": ["RuntimeErrors", "LogicalErrors"],
+            "design": ["LogicalErrors"]
+        }
+        
+        area_to_checkstyle_errors = {
+            "style": ["NamingConventionChecks", "WhitespaceAndFormattingChecks", "JavadocChecks"],
+            "logical": [],
+            "performance": ["MetricsChecks"],
+            "security": ["CodeQualityChecks"],
+            "design": ["MiscellaneousChecks", "FileStructureChecks", "BlockChecks"]
+        }
+        
+        # Populate selected categories
+        for area in problem_areas:
+            area = area.lower()
+            if area in area_to_build_errors:
+                selected_categories["build"].extend(area_to_build_errors[area])
+            if area in area_to_checkstyle_errors:
+                selected_categories["checkstyle"].extend(area_to_checkstyle_errors[area])
+        
+        # Remove duplicates
+        selected_categories["build"] = list(set(selected_categories["build"]))
+        selected_categories["checkstyle"] = list(set(selected_categories["checkstyle"]))
+        
+        # Select errors based on categories
+        selected_errors = select_java_errors_by_categories(selected_categories, difficulty_level)
     
     # Generate error injection instructions
     error_injection_instructions = get_error_injection_instructions(selected_errors)
@@ -527,6 +573,12 @@ Remember to maintain the basic functionality while introducing these problems in
     
     if "code_snippet" in json_data and "problems" in json_data and not "error" in json_data:
         code_snippet = json_data["code_snippet"]
+        # Check if the code snippet is just the placeholder text and not real code
+        if code_snippet.strip() == "// Your Java code with intentional problems here":
+            # Get real code from regex extraction as fallback
+            extracted_code, _ = extract_code_and_problems(response)
+            if extracted_code:
+                code_snippet = extracted_code
         problems = json_data["problems"]
     else:
         # Fallback to regex extraction
@@ -537,9 +589,9 @@ Remember to maintain the basic functionality while introducing these problems in
         logger.warning("Couldn't extract enough problems from LLM response, using predefined ones")
         problems = problem_descriptions
     
-    # If we couldn't extract code, use the template
-    if not code_snippet:
-        logger.warning("Could not extract code from LLM response, using template")
+    # If we couldn't extract code or it's just the placeholder, use the template with injected errors
+    if not code_snippet or code_snippet.strip() == "// Your Java code with intentional problems here":
+        logger.warning("Could not extract valid code from LLM response, using template")
         code_snippet = java_template
     
     logger.info(f"Generated Java code problem with {len(problems)} problems")

@@ -139,13 +139,27 @@ def generate_problem_node(state: Dict) -> Dict:
         
         # Continue with code generation if Ollama is available
         logger.info(f"Generating code problem for {state_obj.programming_language} with difficulty {state_obj.difficulty_level}")
-        code_snippet, known_problems, raw_errors = generate_code_problem(
-            programming_language=state_obj.programming_language,
-            problem_areas=state_obj.problem_areas,
-            difficulty_level=state_obj.difficulty_level,
-            code_length=state_obj.code_length,
-            llm=llm_models["generative"]
-        )
+        
+        # Include specific error categories if provided
+        if hasattr(state_obj, 'specific_error_categories') and state_obj.specific_error_categories:
+            logger.info(f"Using specific error categories: {json.dumps(state_obj.specific_error_categories)}")
+            code_snippet, known_problems, raw_errors = generate_code_problem(
+                programming_language=state_obj.programming_language,
+                problem_areas=state_obj.problem_areas,
+                difficulty_level=state_obj.difficulty_level,
+                code_length=state_obj.code_length,
+                llm=llm_models["generative"],
+                specific_error_categories=state_obj.specific_error_categories
+            )
+        else:
+            logger.info("Using standard problem areas for code generation")
+            code_snippet, known_problems, raw_errors = generate_code_problem(
+                programming_language=state_obj.programming_language,
+                problem_areas=state_obj.problem_areas,
+                difficulty_level=state_obj.difficulty_level,
+                code_length=state_obj.code_length,
+                llm=llm_models["generative"]
+            )
         
         logger.info(f"Successfully generated code with {len(known_problems)} known problems")
         
@@ -160,7 +174,8 @@ def generate_problem_node(state: Dict) -> Dict:
             raw_errors=raw_errors,
             current_step="wait_for_review",
             iteration_count=1,
-            max_iterations=state_obj.max_iterations
+            max_iterations=state_obj.max_iterations,
+            specific_error_categories=state_obj.specific_error_categories if hasattr(state_obj, 'specific_error_categories') else None
         )
         return new_state.to_dict()
     
@@ -430,7 +445,8 @@ def run_peer_review_agent(
     code_length: str = "medium",
     student_review: Optional[str] = None,
     iteration_count: int = None,
-    max_iterations: int = 3
+    max_iterations: int = 3,
+    specific_error_categories: Optional[Dict[str, List[str]]] = None
 ) -> Dict:
     """
     Run the peer code review agent workflow.
@@ -443,6 +459,7 @@ def run_peer_review_agent(
         student_review: The student's review of the code (optional for initial generation)
         iteration_count: Current review iteration (optional)
         max_iterations: Maximum number of review iterations allowed
+        specific_error_categories: Optional dictionary with 'build' and 'checkstyle' keys containing lists of specific error categories
         
     Returns:
         Dictionary with the results of the workflow
@@ -450,6 +467,12 @@ def run_peer_review_agent(
     # Set default problem areas if none provided
     if problem_areas is None:
         problem_areas = ["style", "logical", "performance"]
+    
+    # Log what we're doing
+    if specific_error_categories:
+        logger.info(f"Running peer review agent with specific error categories: {json.dumps(specific_error_categories)}")
+    else:
+        logger.info(f"Running peer review agent with problem areas: {problem_areas}")
         
     # Create the initial state
     initial_state = EnhancedPeerReviewState(
@@ -459,7 +482,8 @@ def run_peer_review_agent(
         code_length=code_length,
         student_review=student_review,
         iteration_count=iteration_count or 1,
-        max_iterations=max_iterations
+        max_iterations=max_iterations,
+        specific_error_categories=specific_error_categories
     )
     
     # Convert to dict for LangGraph
@@ -473,11 +497,10 @@ def run_peer_review_agent(
     try:
         # Use the dictionary-based approach
         result = agent.invoke(initial_state_dict)
-        print("result1: ", result)
+        
         # Convert the result back to an object just to ensure all data is properly structured
         try:
             result_obj = dict_to_state(result)
-            print(result_obj)
             return result_obj.to_dict()
         except Exception as e:
             logger.error(f"Error converting result to object: {str(e)}")

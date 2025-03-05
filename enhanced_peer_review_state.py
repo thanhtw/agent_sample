@@ -1,7 +1,7 @@
 """
 Enhanced PeerReviewState for tracking iterative code reviews.
 This enhances the original PeerReviewState with additional fields for
-tracking iterations, review history, and targeted guidance.
+tracking iterations, review history, targeted guidance, and specific error categories.
 """
 
 from typing import List, Dict, Any, Optional
@@ -37,6 +37,9 @@ class EnhancedPeerReviewState:
         self.problem_areas = kwargs.get("problem_areas", ["style", "logical", "performance"])
         self.difficulty_level = kwargs.get("difficulty_level", "medium")
         self.code_length = kwargs.get("code_length", "medium")
+        
+        # Specific error categories (new parameter)
+        self.specific_error_categories = kwargs.get("specific_error_categories")
         
         # Generated during execution
         self.code_snippet = kwargs.get("code_snippet")
@@ -84,6 +87,7 @@ class EnhancedPeerReviewState:
             "problem_areas": self.problem_areas,
             "difficulty_level": self.difficulty_level,
             "code_length": self.code_length,
+            "specific_error_categories": self.specific_error_categories,
             "code_snippet": self.code_snippet,
             "known_problems": self.known_problems,
             "student_review": self.student_review,

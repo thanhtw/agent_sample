@@ -3,13 +3,14 @@ Java error handler for peer code review system.
 
 This module provides functionality for handling Java-specific errors,
 loading error data from JSON files, and selecting errors for injection.
+Enhanced with direct category selection and improved error injection.
 """
 
 import os
 import json
 import random
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 
 # Configure logging
 logging.basicConfig(
@@ -285,6 +286,43 @@ public class StudentManagementSystem {
 """
 }
 
+def get_all_error_categories() -> Dict[str, List[str]]:
+    """
+    Get all available error categories from both build errors and checkstyle errors.
+    
+    Returns:
+        Dict[str, List[str]]: Dictionary with 'build' and 'checkstyle' categories
+    """
+    build_categories = list(JAVA_BUILD_ERRORS.keys())
+    checkstyle_categories = list(JAVA_CHECKSTYLE_ERRORS.keys())
+    
+    return {
+        "build": build_categories,
+        "checkstyle": checkstyle_categories
+    }
+
+def get_all_error_types() -> Dict[str, Dict[str, List[Dict[str, str]]]]:
+    """
+    Get all error types organized by category.
+    
+    Returns:
+        Dict: Hierarchical dictionary of all error types
+    """
+    error_types = {
+        "build": {},
+        "checkstyle": {}
+    }
+    
+    # Build errors
+    for category, errors in JAVA_BUILD_ERRORS.items():
+        error_types["build"][category] = errors
+    
+    # Checkstyle errors
+    for category, errors in JAVA_CHECKSTYLE_ERRORS.items():
+        error_types["checkstyle"][category] = errors
+    
+    return error_types
+
 def select_java_template(code_length: str) -> str:
     """
     Select a Java code template based on code length.
@@ -297,78 +335,121 @@ def select_java_template(code_length: str) -> str:
     """
     return JAVA_TEMPLATES.get(code_length.lower(), JAVA_TEMPLATES["medium"])
 
-def select_java_errors(problem_areas: List[str], difficulty_level: str) -> List[Dict[str, str]]:
+def select_java_errors_by_categories(selected_categories: Dict[str, List[str]], 
+                                    difficulty_level: str,
+                                    error_counts: Dict[str, int] = None) -> List[Dict[str, str]]:
     """
-    Select Java-specific errors based on problem areas and difficulty.
+    Select Java-specific errors based on selected categories.
     
     Args:
-        problem_areas: List of problem areas to select from
+        selected_categories: Dictionary with 'build' and 'checkstyle' keys, each containing a list of selected categories
         difficulty_level: Difficulty level (easy, medium, hard)
+        error_counts: Optional dictionary with 'build' and 'checkstyle' keys, each containing the number of errors to select
         
     Returns:
         List of selected error dictionaries with name and description
     """
     selected_errors = []
     
-    # Number of errors to select based on difficulty
-    num_errors = {
-        "easy": 2,
-        "medium": 4,
-        "hard": 6
-    }.get(difficulty_level.lower(), 3)
-    
-    # Map problem areas to Java error categories
-    area_to_build_errors = {
-        "logical": ["LogicalErrors"],
-        "performance": ["RuntimeErrors"],
-        "security": ["RuntimeErrors", "LogicalErrors"],
-        "design": ["LogicalErrors"]
-    }
-    
-    area_to_checkstyle_errors = {
-        "style": ["NamingConventionChecks", "WhitespaceAndFormattingChecks", "JavadocChecks"],
-        "logical": [],
-        "performance": ["MetricsChecks"],
-        "security": ["CodeQualityChecks"],
-        "design": ["MiscellaneousChecks", "FileStructureChecks", "BlockChecks"]
-    }
-    
-    # For each problem area, select errors
-    for area in problem_areas:
-        area = area.lower()
-        area_error_count = max(1, num_errors // len(problem_areas))
+    # Determine number of errors based on difficulty if not specified
+    if error_counts is None:
+        total_errors = {
+            "easy": 2,
+            "medium": 4,
+            "hard": 6
+        }.get(difficulty_level.lower(), 3)
         
-        # Select build errors
-        build_categories = area_to_build_errors.get(area, [])
-        for category in build_categories:
-            if category in JAVA_BUILD_ERRORS:
-                errors = JAVA_BUILD_ERRORS[category]
-                sample_size = min(area_error_count // max(1, len(build_categories)), len(errors))
-                if sample_size > 0:
-                    sampled_errors = random.sample(errors, sample_size)
-                    for error in sampled_errors:
-                        selected_errors.append({
-                            "type": "build",
-                            "category": category,
-                            "name": error["error_name"],
-                            "description": error["description"]
-                        })
+        # Calculate number of errors for each type
+        build_categories = selected_categories.get("build", [])
+        checkstyle_categories = selected_categories.get("checkstyle", [])
         
-        # Select checkstyle errors
-        checkstyle_categories = area_to_checkstyle_errors.get(area, [])
-        for category in checkstyle_categories:
-            if category in JAVA_CHECKSTYLE_ERRORS:
-                checks = JAVA_CHECKSTYLE_ERRORS[category]
-                sample_size = min(area_error_count // max(1, len(checkstyle_categories)), len(checks))
-                if sample_size > 0:
-                    sampled_checks = random.sample(checks, sample_size)
-                    for check in sampled_checks:
-                        selected_errors.append({
-                            "type": "checkstyle",
-                            "category": category,
-                            "name": check["check_name"],
-                            "description": check["description"]
-                        })
+        total_categories = len(build_categories) + len(checkstyle_categories)
+        
+        if total_categories == 0:
+            # If no categories selected, default to some standard categories
+            build_categories = ["CompileTimeErrors", "RuntimeErrors"]
+            checkstyle_categories = ["NamingConventionChecks", "WhitespaceAndFormattingChecks"]
+            total_categories = len(build_categories) + len(checkstyle_categories)
+        
+        # Distribute errors between build and checkstyle
+        if total_categories > 0:
+            build_proportion = len(build_categories) / total_categories
+            build_count = max(1, round(total_errors * build_proportion)) if build_categories else 0
+            checkstyle_count = max(1, total_errors - build_count) if checkstyle_categories else 0
+        else:
+            build_count = total_errors // 2
+            checkstyle_count = total_errors - build_count
+        
+        error_counts = {
+            "build": build_count,
+            "checkstyle": checkstyle_count
+        }
+    
+    # Select build errors
+    if "build" in selected_categories and selected_categories["build"]:
+        build_categories = selected_categories["build"]
+        build_count = error_counts["build"]
+        
+        if build_count > 0 and build_categories:
+            # Distribute errors across selected categories
+            errors_per_category = max(1, build_count // len(build_categories))
+            remaining_errors = build_count - (errors_per_category * len(build_categories))
+            
+            for category in build_categories:
+                if category in JAVA_BUILD_ERRORS:
+                    # Get all errors in this category
+                    category_errors = JAVA_BUILD_ERRORS[category]
+                    if category_errors:
+                        # Calculate how many errors to select from this category
+                        category_count = errors_per_category
+                        if remaining_errors > 0:
+                            category_count += 1
+                            remaining_errors -= 1
+                        
+                        # Select random errors from this category
+                        sample_size = min(category_count, len(category_errors))
+                        if sample_size > 0:
+                            sampled_errors = random.sample(category_errors, sample_size)
+                            for error in sampled_errors:
+                                selected_errors.append({
+                                    "type": "build",
+                                    "category": category,
+                                    "name": error["error_name"],
+                                    "description": error["description"]
+                                })
+    
+    # Select checkstyle errors
+    if "checkstyle" in selected_categories and selected_categories["checkstyle"]:
+        checkstyle_categories = selected_categories["checkstyle"]
+        checkstyle_count = error_counts["checkstyle"]
+        
+        if checkstyle_count > 0 and checkstyle_categories:
+            # Distribute errors across selected categories
+            errors_per_category = max(1, checkstyle_count // len(checkstyle_categories))
+            remaining_errors = checkstyle_count - (errors_per_category * len(checkstyle_categories))
+            
+            for category in checkstyle_categories:
+                if category in JAVA_CHECKSTYLE_ERRORS:
+                    # Get all errors in this category
+                    category_errors = JAVA_CHECKSTYLE_ERRORS[category]
+                    if category_errors:
+                        # Calculate how many errors to select from this category
+                        category_count = errors_per_category
+                        if remaining_errors > 0:
+                            category_count += 1
+                            remaining_errors -= 1
+                        
+                        # Select random errors from this category
+                        sample_size = min(category_count, len(category_errors))
+                        if sample_size > 0:
+                            sampled_errors = random.sample(category_errors, sample_size)
+                            for error in sampled_errors:
+                                selected_errors.append({
+                                    "type": "checkstyle",
+                                    "category": category,
+                                    "name": error["check_name"],
+                                    "description": error["description"]
+                                })
     
     # Ensure we have at least some errors if nothing was selected
     if not selected_errors:
@@ -391,9 +472,51 @@ def select_java_errors(problem_areas: List[str], difficulty_level: str) -> List[
                 "description": style_error["description"]
             })
     
-    # Limit to the specified number of errors
-    if len(selected_errors) > num_errors:
-        selected_errors = random.sample(selected_errors, num_errors)
+    # Legacy function for backward compatibility
+    def select_java_errors(problem_areas: List[str], difficulty_level: str) -> List[Dict[str, str]]:
+        """
+        Select Java-specific errors based on problem areas and difficulty.
+        
+        Args:
+            problem_areas: List of problem areas to select from
+            difficulty_level: Difficulty level (easy, medium, hard)
+            
+        Returns:
+            List of selected error dictionaries with name and description
+        """
+        # Map problem areas to categories
+        selected_categories = {"build": [], "checkstyle": []}
+        
+        # Map problem areas to Java error categories
+        area_to_build_errors = {
+            "logical": ["LogicalErrors"],
+            "performance": ["RuntimeErrors"],
+            "security": ["RuntimeErrors", "LogicalErrors"],
+            "design": ["LogicalErrors"]
+        }
+        
+        area_to_checkstyle_errors = {
+            "style": ["NamingConventionChecks", "WhitespaceAndFormattingChecks", "JavadocChecks"],
+            "logical": [],
+            "performance": ["MetricsChecks"],
+            "security": ["CodeQualityChecks"],
+            "design": ["MiscellaneousChecks", "FileStructureChecks", "BlockChecks"]
+        }
+        
+        # Populate selected categories
+        for area in problem_areas:
+            area = area.lower()
+            if area in area_to_build_errors:
+                selected_categories["build"].extend(area_to_build_errors[area])
+            if area in area_to_checkstyle_errors:
+                selected_categories["checkstyle"].extend(area_to_checkstyle_errors[area])
+        
+        # Remove duplicates
+        selected_categories["build"] = list(set(selected_categories["build"]))
+        selected_categories["checkstyle"] = list(set(selected_categories["checkstyle"]))
+        
+        # Use the new function
+        return select_java_errors_by_categories(selected_categories, difficulty_level)
     
     return selected_errors
 
