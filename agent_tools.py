@@ -1,10 +1,18 @@
+"""
+Agent tools for peer code review system.
+
+This module provides the core tools for generating code problems, analyzing student 
+reviews, summarizing review comments, and providing educational feedback.
+"""
+
 import random
 import re
+import json
+import logging
 from typing import List, Dict, Tuple, Optional, Any
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
-import json
 
 # Import the templates from prompts
 from agent_prompts import (
@@ -13,6 +21,13 @@ from agent_prompts import (
     SUMMARIZE_REVIEW_COMMENTS_TEMPLATE,
     COMPARE_AND_EXPLAIN_TEMPLATE
 )
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Common programming problems by category
 PROGRAMMING_PROBLEMS = {
@@ -187,7 +202,15 @@ class ReviewAnalysisResult(BaseModel):
     feedback: str = Field(description="General feedback on the review quality")
 
 def extract_json_from_text(text: str) -> Dict:
-    """Extract JSON data from a text that may contain other content."""
+    """
+    Extract JSON data from a text that may contain other content.
+    
+    Args:
+        text (str): Text containing JSON data
+        
+    Returns:
+        Dict: Extracted JSON data or error dictionary
+    """
     # Try to find JSON block with regex
     json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', text, re.DOTALL)
     if json_match:
@@ -204,19 +227,27 @@ def extract_json_from_text(text: str) -> Dict:
     # Try to parse the JSON
     try:
         return json.loads(json_str)
-    except:
-        # Handle fallback if we can't parse the JSON
+    except json.JSONDecodeError as e:
+        logger.warning(f"Could not parse JSON response: {e}")
         return {"error": "Could not parse JSON response"}
 
 def extract_code_and_problems(text: str) -> Tuple[str, List[str]]:
-    """Extract code and problems from the LLM response."""
+    """
+    Extract code and problems from the LLM response.
+    
+    Args:
+        text (str): LLM response text
+        
+    Returns:
+        Tuple[str, List[str]]: Extracted code snippet and list of problems
+    """
     # Try to extract as JSON first
     try:
         json_data = extract_json_from_text(text)
         if "code_snippet" in json_data and "problems" in json_data:
             return json_data["code_snippet"], json_data["problems"]
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Error extracting JSON: {e}")
     
     # Fallback: extract code block and try to find problem list
     code_match = re.search(r'```(?:\w+)?\s*(.*?)\s*```', text, re.DOTALL)
@@ -224,7 +255,8 @@ def extract_code_and_problems(text: str) -> Tuple[str, List[str]]:
     
     # Try to find problems section
     problems = []
-    problems_section = re.search(r'problems?:?\s*(?:\n|:)(.*?)(?:\n\n|\n#|\Z)', text, re.DOTALL, re.IGNORECASE)
+    # Fix: Simplified regex pattern and corrected the search function call
+    problems_section = re.search(r'problems?:?\s*(?:\n|:)(.*?)(?:\n\n|\n#|\Z)', text, re.DOTALL)
     
     if problems_section:
         problems_text = problems_section.group(1)
@@ -266,7 +298,10 @@ def generate_code_problem(
                 "hard": 3
             }.get(difficulty_level, 2)
             
-            area_problems = random.sample(PROGRAMMING_PROBLEMS[area], min(num_problems, len(PROGRAMMING_PROBLEMS[area])))
+            area_problems = random.sample(
+                PROGRAMMING_PROBLEMS[area], 
+                min(num_problems, len(PROGRAMMING_PROBLEMS[area]))
+            )
             selected_problems.extend(area_problems)
     
     # Ensure we have at least some problems
@@ -295,6 +330,7 @@ def generate_code_problem(
     )
     
     # Run the LLM
+    logger.info(f"Generating code problem in {programming_language} with {len(selected_problems)} problems")
     response = llm.invoke(prompt_text)
     
     # Extract code and problems from the response
@@ -302,12 +338,15 @@ def generate_code_problem(
     
     # If we couldn't extract problems, use the selected ones
     if not problems:
+        logger.warning("Could not extract problems from LLM response, using selected problems")
         problems = selected_problems
         
     # If we couldn't extract code, use the template
     if not code_snippet:
+        logger.warning("Could not extract code from LLM response, using template")
         code_snippet = code_template
     
+    logger.info(f"Generated code problem with {len(problems)} problems")
     return code_snippet, problems
 
 def analyze_student_review(
@@ -338,6 +377,7 @@ def analyze_student_review(
     )
     
     # Run the LLM
+    logger.info("Analyzing student review")
     response = llm.invoke(prompt_text)
     
     # Try to extract JSON data
@@ -352,7 +392,8 @@ def analyze_student_review(
             "accuracy_percentage": float(analysis_data.get("accuracy_percentage", 50.0)),
             "feedback": analysis_data.get("feedback", "The analysis was partially completed.")
         }
-    except:
+    except Exception as e:
+        logger.warning(f"Error parsing analysis JSON: {e}, falling back to regex extraction")
         # If parsing fails, return a simplified analysis
         identified = []
         missed = []
@@ -406,6 +447,7 @@ def summarize_review_comments(
     )
     
     # Run the LLM
+    logger.info("Generating review summary")
     summary = llm.invoke(prompt_text)
     
     return summary
@@ -447,6 +489,7 @@ def compare_and_explain(
     )
     
     # Run the LLM
+    logger.info("Generating comparison report")
     comparison = llm.invoke(prompt_text)
     
     return comparison

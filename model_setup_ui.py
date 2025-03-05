@@ -4,7 +4,7 @@ UI Components for model setup and management in the Peer Review System.
 
 import streamlit as st
 import os
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
 # Import LLM Manager
@@ -76,7 +76,7 @@ class ModelSetupUI:
                 # Show pull button for models that haven't been pulled yet
                 if st.button(f"Pull {selected_model['name']} Model", key=f"{key_prefix}_pull"):
                     with st.spinner(f"Pulling {selected_model['name']}..."):
-                        if self.llm_manager.langchain_manager.download_ollama_model(model_id):
+                        if self.llm_manager.download_ollama_model(model_id):
                             st.success(f"Successfully pulled {selected_model['name']}")
                             st.rerun()
                         else:
@@ -96,21 +96,9 @@ class ModelSetupUI:
                 help="Higher values make output more random, lower values more deterministic."
             )
             
-            # Max tokens slider
-            max_tokens = st.slider(
-                "Max Tokens:",
-                min_value=64,
-                max_value=4096,
-                value=512,
-                step=64,
-                key=f"{key_prefix}_tokens",
-                help="Maximum number of tokens to generate."
-            )
-            
             # Store parameters
             model_params = {
-                "temperature": temperature,
-                "max_tokens": max_tokens
+                "temperature": temperature
             }
             
             # Initialize button - only enable if model is pulled
@@ -122,18 +110,15 @@ class ModelSetupUI:
                     with st.spinner(f"Initializing {selected_model['name']}..."):
                         llm = self.llm_manager.initialize_model(
                             model_id, 
-                            "ollama", 
                             model_params
                         )
                         
                         if llm:
                             st.session_state[f"{key_prefix}_llm_name"] = model_id
-                            st.session_state[f"{key_prefix}_llm_provider"] = "ollama"
                             st.session_state[f"{key_prefix}_llm_params"] = model_params
                             st.session_state[f"{key_prefix}_llm_initialized"] = True
                             
                             # Store in session state for retrieval
-                            # Note: we don't store the actual LLM in session state as it may not be picklable
                             st.success(f"Successfully initialized {selected_model['name']}!")
                             
                             return model_id, model_params

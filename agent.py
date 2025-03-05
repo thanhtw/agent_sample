@@ -1,8 +1,20 @@
+"""
+Peer Code Review Training Agent
+
+This module implements a LangGraph-based workflow for training students in code review
+skills with the following stages:
+1. Generate code with intentional problems
+2. Analyze student reviews
+3. Summarize review feedback
+4. Compare student review with expected issues and explain differences
+"""
+
 import os
+import logging
+import traceback
 from typing import List, Dict, Any, Optional, Tuple, Literal
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 # Import custom prompts and tools
@@ -19,8 +31,15 @@ from agent_tools import (
     compare_and_explain
 )
 
-# Import the new LLM Manager
+# Import the LLM Manager
 from llm_manager import LLMManager
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -66,35 +85,35 @@ def initialize_llm_models():
     
     # Fall back to defaults for any model that failed to initialize
     if not models["generative"]:
-        print("Falling back to default model for generative tasks")
+        logger.info("Falling back to default model for generative tasks")
+        default_temp = float(os.getenv("GENERATIVE_TEMPERATURE", "0.7"))
         models["generative"] = llm_manager.initialize_model(
-            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
-            "ollama",
-            {"temperature": float(os.getenv("GENERATIVE_TEMPERATURE", "0.7"))}
+            os.getenv("DEFAULT_MODEL", "llama3:1b"),
+            {"temperature": default_temp}
         )
     
     if not models["review"]:
-        print("Falling back to default model for review tasks")
+        logger.info("Falling back to default model for review tasks")
+        default_temp = float(os.getenv("REVIEW_TEMPERATURE", "0.2"))
         models["review"] = llm_manager.initialize_model(
-            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
-            "ollama",
-            {"temperature": float(os.getenv("REVIEW_TEMPERATURE", "0.2"))}
+            os.getenv("DEFAULT_MODEL", "llama3:1b"),
+            {"temperature": default_temp}
         )
         
     if not models["summary"]:
-        print("Falling back to default model for summary tasks")
+        logger.info("Falling back to default model for summary tasks")
+        default_temp = float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))
         models["summary"] = llm_manager.initialize_model(
-            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
-            "ollama",
-            {"temperature": float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))}
+            os.getenv("DEFAULT_MODEL", "llama3:1b"),
+            {"temperature": default_temp}
         )
         
     if not models["compare"]:
-        print("Falling back to default model for comparison tasks")
+        logger.info("Falling back to default model for comparison tasks")
+        default_temp = float(os.getenv("COMPARE_TEMPERATURE", "0.2"))
         models["compare"] = llm_manager.initialize_model(
-            os.getenv("DEFAULT_MODEL", "llama3.2:1b"),
-            "ollama",
-            {"temperature": float(os.getenv("COMPARE_TEMPERATURE", "0.2"))}
+            os.getenv("DEFAULT_MODEL", "llama3:1b"),
+            {"temperature": default_temp}
         )
     
     return models
@@ -107,30 +126,27 @@ def generate_problem_node(state: PeerReviewState) -> PeerReviewState:
     """Generate code problems with intentional issues."""
     try:
         # Test Ollama connection first
-        import requests
-        try:
-            response = requests.get(f"{llm_manager.ollama_base_url}/api/tags")
-            if response.status_code != 200:
-                return PeerReviewState(
-                    **state.dict(),
-                    error=f"Cannot connect to Ollama at {llm_manager.ollama_base_url}. Status code: {response.status_code}",
-                    current_step="error"
-                )
-            
-            # Check if model exists
-            models = response.json().get("models", [])
-            default_model = llm_manager.default_model
-            model_exists = any(m.get("name") == default_model for m in models)
-            if not model_exists:
-                return PeerReviewState(
-                    **state.dict(),
-                    error=f"Model '{default_model}' not found in Ollama. Please run 'ollama pull {default_model}' first.",
-                    current_step="error"
-                )
-        except requests.RequestException as re:
+        connection_status, message = llm_manager.check_ollama_connection()
+        
+        if not connection_status:
             return PeerReviewState(
-                **state.dict(),
-                error=f"Failed to connect to Ollama at {llm_manager.ollama_base_url}. Error: {str(re)}",
+                programming_language=state.programming_language,
+                problem_areas=state.problem_areas,
+                difficulty_level=state.difficulty_level,
+                code_length=state.code_length,
+                error=f"Cannot connect to Ollama: {message}",
+                current_step="error"
+            )
+        
+        # Check if default model exists
+        default_model = llm_manager.default_model
+        if not llm_manager.check_model_availability(default_model):
+            return PeerReviewState(
+                programming_language=state.programming_language,
+                problem_areas=state.problem_areas,
+                difficulty_level=state.difficulty_level,
+                code_length=state.code_length,
+                error=f"Model '{default_model}' not found in Ollama. Please run 'ollama pull {default_model}' first.",
                 current_step="error"
             )
         
@@ -143,18 +159,27 @@ def generate_problem_node(state: PeerReviewState) -> PeerReviewState:
             llm=llm_models["generative"]
         )
         
+        # Create a new state with updated values
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
             code_snippet=code_snippet,
             known_problems=known_problems,
             current_step="wait_for_review"
         )
+    
     except Exception as e:
-        import traceback
         error_traceback = traceback.format_exc()
+        logger.error(f"Error generating code problem: {str(e)}\n{error_traceback}")
+        
         return PeerReviewState(
-            **state.dict(),
-            error=f"Error generating code problem: {str(e)}\n\nDetails: {error_traceback}",
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            error=f"Error generating code problem: {str(e)}",
             current_step="error"
         )
 
@@ -163,7 +188,12 @@ def analyze_review_node(state: PeerReviewState) -> PeerReviewState:
     try:
         if not state.student_review:
             return PeerReviewState(
-                **state.dict(),
+                programming_language=state.programming_language,
+                problem_areas=state.problem_areas,
+                difficulty_level=state.difficulty_level,
+                code_length=state.code_length,
+                code_snippet=state.code_snippet,
+                known_problems=state.known_problems,
                 error="No student review provided for analysis.",
                 current_step="error"
             )
@@ -176,13 +206,28 @@ def analyze_review_node(state: PeerReviewState) -> PeerReviewState:
         )
         
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
             review_analysis=review_analysis,
             current_step="summarize_review"
         )
+    
     except Exception as e:
+        logger.error(f"Error analyzing student review: {str(e)}")
+        
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
             error=f"Error analyzing student review: {str(e)}",
             current_step="error"
         )
@@ -196,13 +241,30 @@ def summarize_review_node(state: PeerReviewState) -> PeerReviewState:
         )
         
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
+            review_analysis=state.review_analysis,
             review_summary=review_summary,
             current_step="compare_explain"
         )
+    
     except Exception as e:
+        logger.error(f"Error summarizing review: {str(e)}")
+        
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
+            review_analysis=state.review_analysis,
             error=f"Error summarizing review: {str(e)}",
             current_step="error"
         )
@@ -220,13 +282,32 @@ def compare_explain_node(state: PeerReviewState) -> PeerReviewState:
         )
         
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
+            review_analysis=state.review_analysis,
+            review_summary=state.review_summary,
             comparison_report=comparison_report,
             current_step="complete"
         )
+    
     except Exception as e:
+        logger.error(f"Error comparing and explaining: {str(e)}")
+        
         return PeerReviewState(
-            **state.dict(),
+            programming_language=state.programming_language,
+            problem_areas=state.problem_areas,
+            difficulty_level=state.difficulty_level,
+            code_length=state.code_length,
+            code_snippet=state.code_snippet,
+            known_problems=state.known_problems,
+            student_review=state.student_review,
+            review_analysis=state.review_analysis,
+            review_summary=state.review_summary,
             error=f"Error comparing and explaining: {str(e)}",
             current_step="error"
         )
@@ -332,15 +413,29 @@ def run_peer_review_agent(
     agent = create_peer_review_agent()
     
     # Run the agent
+    logger.info(f"Running peer review agent for {programming_language}")
     result = agent.invoke(initial_state)
     
     # Return the final state as a dictionary
-    return result.dict()
+    # Using manual conversion to avoid compatibility issues
+    return {
+        "programming_language": result.programming_language,
+        "problem_areas": result.problem_areas,
+        "difficulty_level": result.difficulty_level,
+        "code_length": result.code_length,
+        "code_snippet": result.code_snippet,
+        "known_problems": result.known_problems,
+        "student_review": result.student_review,
+        "review_analysis": result.review_analysis,
+        "review_summary": result.review_summary,
+        "comparison_report": result.comparison_report,
+        "current_step": result.current_step,
+        "error": result.error
+    }
 
 if __name__ == "__main__":
     # This code will only run when executing this file directly
     # It's a simple example demonstrating agent functionality
-    # For the UI, refer to app.py
     
     # Generate a code problem
     result = run_peer_review_agent()
