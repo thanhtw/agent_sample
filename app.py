@@ -1,14 +1,17 @@
 """
-Streamlit app for the Peer Code Review Training System.
+Enhanced Streamlit app for the Java Peer Code Review Training System.
 
-This module provides a web interface for the peer code review training system,
-allowing users to generate code problems, submit reviews, and receive feedback.
+This module provides a web interface with iterative review support,
+allowing users to generate Java code problems, submit reviews,
+receive feedback, and iterate on their reviews when needed.
 """
 
 import streamlit as st
 import os
 import logging
 import time
+import datetime
+from typing import Dict, List, Any
 from agent import run_peer_review_agent
 from dotenv import load_dotenv
 
@@ -32,8 +35,8 @@ model_setup_ui = ModelSetupUI(llm_manager)
 
 # Set page config
 st.set_page_config(
-    page_title="Peer Code Review Training System",
-    page_icon="👨‍💻",
+    page_title="Java Code Review Training System",
+    page_icon="☕",  # Java coffee cup icon
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -101,6 +104,58 @@ st.markdown("""
             color: #F44336;
             font-weight: bold;
         }
+        .guidance-box {
+            background-color: #e8f4f8;
+            border-left: 4px solid #03A9F4;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .iteration-badge {
+            background-color: #E1F5FE;
+            color: #0288D1;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .feedback-box {
+            background-color: #E8F5E9;
+            border-left: 4px solid #4CAF50;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .warning-box {
+            background-color: #FFF8E1;
+            border-left: 4px solid #FFC107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .review-history-item {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #fafafa;
+        }
+        .tab-content {
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+        }
+        .java-keyword {
+            color: #0033B3;
+            font-weight: bold;
+        }
+        .java-comment {
+            color: #808080;
+            font-style: italic;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -126,6 +181,20 @@ def initialize_session_state():
         st.session_state.models_configured = False
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = 0
+    
+    # New fields for iterative review
+    if 'iteration_count' not in st.session_state:
+        st.session_state.iteration_count = 1
+    if 'max_iterations' not in st.session_state:
+        st.session_state.max_iterations = 3
+    if 'review_sufficient' not in st.session_state:
+        st.session_state.review_sufficient = False
+    if 'targeted_guidance' not in st.session_state:
+        st.session_state.targeted_guidance = None
+    if 'review_history' not in st.session_state:
+        st.session_state.review_history = []
+    if 'raw_errors' not in st.session_state:
+        st.session_state.raw_errors = None
 
 def check_model_status():
     """Check the status of all required models."""
@@ -162,7 +231,7 @@ def generate_problem(programming_language, problem_areas, difficulty_level, code
         progress_bar.progress(10)
         time.sleep(0.5)
         
-        status_text.text("Generating code problem...")
+        status_text.text("Generating Java code problem...")
         progress_bar.progress(30)
         
         # Convert inputs to lowercase for the backend
@@ -178,11 +247,15 @@ def generate_problem(programming_language, problem_areas, difficulty_level, code
         time.sleep(0.5)
         
         # Update session state
-        st.session_state.code_snippet = result["code_snippet"]
-        st.session_state.known_problems = result["known_problems"]
+        st.session_state.code_snippet = result.get("code_snippet", "")
+        st.session_state.known_problems = result.get("known_problems", [])
+        st.session_state.raw_errors = result.get("raw_errors", [])
         st.session_state.current_step = "review"
         st.session_state.error = None
         st.session_state.active_tab = 1  # Move to the review tab
+        st.session_state.iteration_count = 1
+        st.session_state.review_history = []
+        st.session_state.targeted_guidance = None
         
         progress_bar.progress(100)
         status_text.text("Complete!")
@@ -212,13 +285,15 @@ def analyze_review():
         progress_bar.progress(20)
         time.sleep(0.5)
         
-        # Run the complete workflow with the student review
-        programming_language = st.session_state.get("programming_language", "python")
+        # Run the analysis step
+        programming_language = st.session_state.get("programming_language", "java")
         problem_areas = st.session_state.get("problem_areas", ["style", "logical", "performance"])
         difficulty_level = st.session_state.get("difficulty_level", "medium")
         code_length = st.session_state.get("code_length", "medium")
+        iteration_count = st.session_state.get("iteration_count", 1)
+        max_iterations = st.session_state.get("max_iterations", 3)
         
-        status_text.text("Analyzing student review...")
+        status_text.text("Analyzing your review...")
         progress_bar.progress(40)
         
         result = run_peer_review_agent(
@@ -227,21 +302,33 @@ def analyze_review():
             programming_language=programming_language.lower(),
             problem_areas=[area.lower() for area in problem_areas],
             difficulty_level=difficulty_level.lower(),
-            code_length=code_length.lower()
+            code_length=code_length.lower(),
+            iteration_count=iteration_count,
+            max_iterations=max_iterations
         )
         
         status_text.text("Generating feedback...")
         progress_bar.progress(70)
         
         # Update session state
-        st.session_state.review_analysis = result["review_analysis"]
-        st.session_state.review_summary = result["review_summary"]
-        st.session_state.comparison_report = result["comparison_report"]
+        st.session_state.review_analysis = result.get("review_analysis", {})
+        st.session_state.review_summary = result.get("review_summary", "")
+        st.session_state.comparison_report = result.get("comparison_report", "")
+        st.session_state.review_sufficient = result.get("review_sufficient", False)
+        st.session_state.targeted_guidance = result.get("targeted_guidance", "")
+        st.session_state.review_history = result.get("review_history", [])
         st.session_state.error = None
-        st.session_state.active_tab = 2  # Move to the analysis tab
+        
+        # Decide which tab to display next
+        if st.session_state.review_sufficient or iteration_count >= max_iterations:
+            st.session_state.active_tab = 2  # Move to the analysis tab
+        else:
+            # Update iteration count for next review
+            st.session_state.iteration_count = iteration_count + 1
+            st.session_state.active_tab = 1  # Stay on review tab for another attempt
         
         progress_bar.progress(100)
-        status_text.text("Complete!")
+        status_text.text("Analysis complete!")
         time.sleep(0.5)
         
         # Clear progress indicators
@@ -266,6 +353,28 @@ def display_results():
         unsafe_allow_html=True
     )
     
+    # Show review history in an expander if there are multiple iterations
+    if len(st.session_state.review_history) > 1:
+        with st.expander("Review History", expanded=False):
+            st.write("Your review attempts:")
+            
+            for i, review in enumerate(st.session_state.review_history):
+                review_analysis = review.get("review_analysis", {})
+                
+                st.markdown(
+                    f'<div class="review-history-item">'
+                    f'<h4>Attempt {i+1}</h4>'
+                    f'<p>Found {review_analysis.get("identified_count", 0)} of '
+                    f'{review_analysis.get("total_problems", len(st.session_state.known_problems))} issues '
+                    f'({review_analysis.get("accuracy_percentage", 0):.1f}% accuracy)</p>'
+                    f'<details>'
+                    f'<summary>View this review</summary>'
+                    f'<pre>{review.get("student_review", "")}</pre>'
+                    f'</details>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+    
     # Display analysis details in an expander
     with st.expander("Detailed Analysis", expanded=False):
         # Display review summary
@@ -276,7 +385,10 @@ def display_results():
         if st.session_state.review_analysis:
             st.subheader("Review Analysis:")
             accuracy = st.session_state.review_analysis.get("accuracy_percentage", 0)
+            identified_percentage = st.session_state.review_analysis.get("identified_percentage", 0)
+            
             st.write(f"**Accuracy:** {accuracy:.1f}%")
+            st.write(f"**Problems Identified:** {identified_percentage:.1f}% of all issues")
             
             col1, col2 = st.columns(2)
             
@@ -297,7 +409,7 @@ def display_results():
                     st.write(f"⚠ {issue}")
     
     # Start over button
-    if st.button("Start Over", type="primary"):
+    if st.button("Start New Review", type="primary"):
         # Reset session state
         for key in list(st.session_state.keys()):
             # Keep model configuration
@@ -316,8 +428,8 @@ def main():
     initialize_session_state()
     
     # Header
-    st.title("Peer Code Review Training System")
-    st.markdown("### Train your code review skills with AI-generated exercises")
+    st.title("Java Code Review Training System")
+    st.markdown("### Train your Java code review skills with AI-generated exercises")
     
     # Sidebar for model setup
     with st.sidebar:
@@ -374,6 +486,22 @@ def main():
         # Show advanced model setup button
         if st.button("Advanced Model Setup"):
             st.session_state.show_model_setup = True
+        
+        # Sidebar section for iterative review settings
+        st.markdown("---")
+        st.header("Review Settings")
+        
+        max_iterations = st.slider(
+            "Maximum Review Attempts:",
+            min_value=1,
+            max_value=5,
+            value=st.session_state.max_iterations,
+            help="Maximum number of review attempts allowed before final evaluation"
+        )
+        
+        # Update max iterations in session state
+        if max_iterations != st.session_state.max_iterations:
+            st.session_state.max_iterations = max_iterations
     
     # Show model setup screen if needed
     if st.session_state.get("show_model_setup", False):
@@ -398,7 +526,7 @@ def main():
     
     # Update parameters in session state
     if "programming_language" not in st.session_state:
-        st.session_state.programming_language = "Python"
+        st.session_state.programming_language = "Java"
     if "problem_areas" not in st.session_state:
         st.session_state.problem_areas = ["Style", "Logical", "Performance"]
     if "difficulty_level" not in st.session_state:
@@ -407,17 +535,14 @@ def main():
         st.session_state.code_length = "Medium"
     
     with tabs[0]:
-        st.header("Generate Code Problem")
+        st.header("Generate Java Code Problem")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            programming_language = st.selectbox(
-                "Programming Language",
-                ["Python", "JavaScript", "Java"],
-                index=0,
-                key="programming_language_select"
-            )
+            # Fixed to Java now
+            st.info("This system is specialized for Java code review training.")
+            st.session_state.programming_language = "Java"
             
             difficulty_level = st.select_slider(
                 "Difficulty Level",
@@ -427,7 +552,6 @@ def main():
             )
             
             # Update session state when widgets change
-            st.session_state.programming_language = programming_language
             st.session_state.difficulty_level = difficulty_level
         
         with col2:
@@ -450,7 +574,7 @@ def main():
             st.session_state.code_length = code_length
         
         generate_button = st.button(
-            "Generate Code Problem", 
+            "Generate Java Code Problem", 
             type="primary", 
             disabled=not st.session_state.models_configured
         )
@@ -459,9 +583,9 @@ def main():
             st.warning("Model configuration is incomplete. Use Advanced Model Setup in the sidebar.")
         
         if generate_button:
-            with st.spinner("Generating code problem with intentional issues..."):
+            with st.spinner("Generating Java code problem with intentional issues..."):
                 success = generate_problem(
-                    programming_language,
+                    "Java",  # Now fixed to Java
                     problem_areas,
                     difficulty_level,
                     code_length
@@ -472,8 +596,8 @@ def main():
         
         # Display existing code if available
         if st.session_state.code_snippet:
-            st.subheader("Generated Code with Intentional Problems:")
-            st.code(st.session_state.code_snippet, language=programming_language.lower())
+            st.subheader("Generated Java Code with Intentional Problems:")
+            st.code(st.session_state.code_snippet, language="java")
             
             # IMPORTANT: In a real application, we would NOT show the known problems
             # We're showing them here just for demonstration purposes
@@ -483,21 +607,57 @@ def main():
                     st.markdown(f"{i}. {problem}")
     
     with tabs[1]:
-        st.header("Submit Your Code Review")
+        # Show iteration badge if not the first iteration
+        if st.session_state.iteration_count > 1:
+            st.header(
+                f"Submit Your Code Review "
+                f"<span class='iteration-badge'>Attempt {st.session_state.iteration_count} of "
+                f"{st.session_state.max_iterations}</span>", 
+                unsafe_allow_html=True
+            )
+        else:
+            st.header("Submit Your Code Review")
         
         if not st.session_state.code_snippet:
             st.info("Please generate a code problem first in the 'Generate Code Problem' tab.")
         else:
+            # Display targeted guidance if available (for iterations after the first)
+            if st.session_state.targeted_guidance and st.session_state.iteration_count > 1:
+                st.markdown(
+                    f'<div class="guidance-box">'
+                    f'<h4>Review Guidance</h4>'
+                    f'{st.session_state.targeted_guidance}'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                
+                st.markdown(
+                    f'<div class="warning-box">'
+                    f'<h4>Previous Attempt Results</h4>'
+                    f'You identified {st.session_state.review_analysis.get("identified_count", 0)} of '
+                    f'{st.session_state.review_analysis.get("total_problems", 0)} issues '
+                    f'({st.session_state.review_analysis.get("identified_percentage", 0):.1f}%). '
+                    f'Can you find more issues in this attempt?'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            
             # Display the code for review
-            st.subheader("Code to Review:")
-            st.code(
-                st.session_state.code_snippet, 
-                language=st.session_state.programming_language.lower()
-            )
+            st.subheader("Java Code to Review:")
+            st.code(st.session_state.code_snippet, language="java")
             
             # Student review input
             st.subheader("Your Review:")
             st.write("Please review the code above and identify any issues or problems:")
+            
+            # If not the first iteration, clear the previous review text
+            if st.session_state.iteration_count > 1 and st.session_state.student_review:
+                # Save the previous review but clear the input for a new review
+                prev_review = st.session_state.student_review
+                if 'previous_reviews' not in st.session_state:
+                    st.session_state.previous_reviews = []
+                st.session_state.previous_reviews.append(prev_review)
+                st.session_state.student_review = ""
             
             # Get or update the student review
             student_review = st.text_area(
@@ -511,8 +671,17 @@ def main():
             if student_review != st.session_state.student_review:
                 st.session_state.student_review = student_review
             
+            # Show previous reviews if available
+            if hasattr(st.session_state, 'previous_reviews') and st.session_state.previous_reviews:
+                with st.expander("View your previous review attempts", expanded=False):
+                    for i, prev_review in enumerate(st.session_state.previous_reviews):
+                        st.markdown(f"**Attempt {i+1}:**")
+                        st.text(prev_review)
+            
             # Submit button
-            if st.button("Submit Review", type="primary"):
+            submit_text = "Submit Review" if st.session_state.iteration_count == 1 else f"Submit Review (Attempt {st.session_state.iteration_count} of {st.session_state.max_iterations})"
+            
+            if st.button(submit_text, type="primary"):
                 if not st.session_state.student_review.strip():
                     st.warning("Please enter your review before submitting.")
                 else:
