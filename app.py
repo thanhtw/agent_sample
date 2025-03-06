@@ -531,27 +531,7 @@ def display_error_category_selection():
                     if category in st.session_state.selected_error_categories["build"]:
                         st.session_state.selected_error_categories["build"].remove(category)
                 
-                # Show expand/collapse control if there are errors
-                if error_count > 0:
-                    # Initialize expanded state for this category if it doesn't exist
-                    if category_key not in st.session_state.expanded_categories:
-                        st.session_state.expanded_categories[category_key] = False
-                    
-                    # Show expand/collapse button
-                    if st.button(f"{'▼ Show' if not st.session_state.expanded_categories[category_key] else '▲ Hide'} specific errors", 
-                               key=f"toggle_{category_key}"):
-                        st.session_state.expanded_categories[category_key] = not st.session_state.expanded_categories[category_key]
-                    
-                    # Display subitems if expanded
-                    if st.session_state.expanded_categories[category_key]:
-                        st.markdown("<div class='subcategory-container'>", unsafe_allow_html=True)
-                        # Display error subitems
-                        for error in all_error_types["build"].get(category, []):
-                            error_name = error.get("error_name", "Unknown error")
-                            error_desc = error.get("description", "")
-                            st.markdown(f"<div class='error-item'><b>{error_name}</b>: {error_desc}</div>", unsafe_allow_html=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
-    
+                
     # Checkstyle errors
     st.markdown("<div class='error-type-header'>Checkstyle Errors</div>", unsafe_allow_html=True)
     checkstyle_categories = all_categories["checkstyle"]
@@ -585,27 +565,7 @@ def display_error_category_selection():
                     if category in st.session_state.selected_error_categories["checkstyle"]:
                         st.session_state.selected_error_categories["checkstyle"].remove(category)
                 
-                # Show expand/collapse control if there are errors
-                if error_count > 0:
-                    # Initialize expanded state for this category if it doesn't exist
-                    if category_key not in st.session_state.expanded_categories:
-                        st.session_state.expanded_categories[category_key] = False
-                    
-                    # Show expand/collapse button
-                    if st.button(f"{'▼ Show' if not st.session_state.expanded_categories[category_key] else '▲ Hide'} specific errors", 
-                               key=f"toggle_{category_key}"):
-                        st.session_state.expanded_categories[category_key] = not st.session_state.expanded_categories[category_key]
-                    
-                    # Display subitems if expanded
-                    if st.session_state.expanded_categories[category_key]:
-                        st.markdown("<div class='subcategory-container'>", unsafe_allow_html=True)
-                        # Display error subitems
-                        for error in all_error_types["checkstyle"].get(category, []):
-                            error_name = error.get("check_name", "Unknown error")
-                            error_desc = error.get("description", "")
-                            st.markdown(f"<div class='error-item'><b>{error_name}</b>: {error_desc}</div>", unsafe_allow_html=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
-    
+                
     # Show selected categories
     build_selected = st.session_state.selected_error_categories["build"]
     checkstyle_selected = st.session_state.selected_error_categories["checkstyle"]
